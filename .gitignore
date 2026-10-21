@@ -1,0 +1,15 @@
+# Sunucuya özel ayar (veritabanı şifresi) — depoya girmemeli
+config.php
+
+# Fatura PDF arşivi ve yedekler — kişisel/ticari veri, depoya girmemeli
+pdf-arsiv/
+softpeak-faturalar/
+*.sql.gz
+*.zip
+
+# İşletim sistemi / editör dosyaları
+Thumbs.db
+.DS_Store
+desktop.ini
+.vscode/
+.idea/

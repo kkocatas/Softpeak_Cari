@@ -1,0 +1,21 @@
+# Softpeak Cari — Apache ayarları
+Options -Indexes
+DirectoryIndex index.php
+
+# Ayar dosyaları ve kütüphane klasörü dışarıdan açılamasın
+<FilesMatch "^(config\.php|config\.sample\.php|README\.md)$">
+  Require all denied
+</FilesMatch>
+RedirectMatch 404 ^.*/lib/.*$
+RedirectMatch 404 ^.*/pdf-arsiv/.*$
+
+# HTTPS'e yönlendirme (SSL sertifikası etkinse başındaki # işaretlerini kaldırın)
+# RewriteEngine On
+# RewriteCond %{HTTPS} !=on
+# RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# PDF yükleme sınırları (hosting izin veriyorsa; izin vermiyorsa cPanel > PHP ayarlarından değiştirin)
+<IfModule mod_php.c>
+  php_value upload_max_filesize 25M
+  php_value post_max_size 26M
+</IfModule>
