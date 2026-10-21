@@ -9,7 +9,7 @@ if (!is_file(__DIR__ . '/../config.php')) {
 }
 $CONFIG = require __DIR__ . '/../config.php';
 
-date_default_timezone_set('Europe/Istanbul');
+date_default_timezone_set((string)cfg('timezone', 'Europe/Istanbul'));
 mb_internal_encoding('UTF-8');
 
 function cfg(string $k, $default = null) { global $CONFIG; return $CONFIG[$k] ?? $default; }
@@ -23,7 +23,7 @@ function db(): PDO {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
-    $pdo->exec("SET time_zone = '+03:00'");
+    $pdo->exec("SET time_zone = '" . date('P') . "'");
     return $pdo;
 }
 
@@ -35,7 +35,7 @@ function is_https(): bool {
 
 function start_session(): void {
     if (session_status() === PHP_SESSION_ACTIVE) return;
-    session_name('SPCARI');
+    session_name('CARI_OTURUM');
     session_set_cookie_params([
         'lifetime' => 0,
         'path' => rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/') . '/',
@@ -93,7 +93,7 @@ function pdf_inner_dir(): string { return dirname(__DIR__) . '/pdf-arsiv'; }
 
 /**
  * Fatura PDF klasörünün yolu.
- * 'auto': önce web kök dizininin yanındaki softpeak-faturalar; orada klasör açılamıyorsa uygulama içindeki pdf-arsiv.
+ * 'auto': önce web kök dizininin yanındaki cari-belgeler; orada klasör açılamıyorsa uygulama içindeki pdf-arsiv.
  * Bir kez seçilen yer sabit kalır (pdf-arsiv'de dosya varsa hep orası kullanılır).
  */
 function pdf_dir_path(): string {
@@ -102,7 +102,7 @@ function pdf_dir_path(): string {
     $inner = pdf_inner_dir();
     if (is_dir($inner)) return $inner;
     $docroot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: dirname(__DIR__, 2);
-    $outer = dirname($docroot) . '/softpeak-faturalar';
+    $outer = dirname($docroot) . '/cari-belgeler';
     if (is_dir($outer) || @mkdir($outer, 0750, true)) return $outer;
     return $inner;
 }
@@ -124,4 +124,74 @@ function pdf_root(): string {
     }
     if (norm_path($dir) === norm_path(pdf_inner_dir())) protect_inner_dir($dir);
     return $dir;
+}
+
+/* ---------- veritabanı sürümü (sonradan eklenen tablo/sütunlar) ---------- */
+const SCHEMA_VER = 5;
+/** Sonradan eklenen tabloları mevcut kurulumlarda oluşturur (oturum başına bir kez). */
+function ensure_schema(): void {
+    if (($_SESSION['schema'] ?? 0) >= SCHEMA_VER) return;
+    db()->exec("CREATE TABLE IF NOT EXISTS odeme_dagitim (   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,   hareket_id INT UNSIGNED NOT NULL,   fatura_id INT UNSIGNED NOT NULL,   tutar DECIMAL(15,2) NOT NULL,   KEY ix_fatura (fatura_id), KEY ix_hareket (hareket_id),   CONSTRAINT fk_dagitim_hareket FOREIGN KEY (hareket_id) REFERENCES hareketler(id) ON DELETE CASCADE,   CONSTRAINT fk_dagitim_fatura FOREIGN KEY (fatura_id) REFERENCES faturalar(id) ON DELETE CASCADE ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci");
+    // v3: personel kartında KDV oranı
+    $st = db()->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cariler' AND COLUMN_NAME = 'kdv_oran'");
+    $st->execute();
+    if (!(int)$st->fetchColumn()) db()->exec('ALTER TABLE cariler ADD COLUMN kdv_oran DECIMAL(5,2) NOT NULL DEFAULT 20 AFTER aylik_satis');
+    // v4: cari kartlarında e-posta ve telefon
+    foreach (['eposta' => "VARCHAR(150) NOT NULL DEFAULT '' AFTER vkn", 'telefon' => "VARCHAR(30) NOT NULL DEFAULT '' AFTER eposta"] as $kol => $tanim) {
+        $st = db()->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cariler' AND COLUMN_NAME = ?");
+        $st->execute([$kol]);
+        if (!(int)$st->fetchColumn()) db()->exec("ALTER TABLE cariler ADD COLUMN $kol $tanim");
+    }
+    // v5: firma ayarları (marka, VKN, logo, listeler) veritabanında
+    db()->exec('CREATE TABLE IF NOT EXISTS ayarlar (anahtar VARCHAR(50) NOT NULL PRIMARY KEY, deger MEDIUMTEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci');
+    $var = db()->query('SELECT anahtar FROM ayarlar')->fetchAll(PDO::FETCH_COLUMN);
+    // Önceki sürümlerde VKN config.php'deydi (eski ayar adlarıyla); bir kez veritabanına taşınır.
+    $eskiVkn = preg_replace('/\D/', '', (string)(cfg('firma_vkn') ?: cfg('softpeak_vkn', '')));
+    if (!in_array('firma_vkn', $var, true) && $eskiVkn !== '') ayar_yaz('firma_vkn', $eskiVkn);
+    $eskiLogo = dirname(__DIR__) . '/assets/logo.png';
+    if (!in_array('logo_data', $var, true) && is_file($eskiLogo) && ($bin = file_get_contents($eskiLogo))) {
+        ayar_yaz('logo_data', base64_encode($bin)); ayar_yaz('logo_mime', 'image/png'); ayar_yaz('logo_surum', substr(md5($bin), 0, 10));
+    }
+    $_SESSION['schema'] = SCHEMA_VER;
+    unset($GLOBALS['__ayar_cache']);
+}
+
+/* ---------- firma ayarları: marka, VKN, logo, seçenek listeleri (koda gömülü değil, veritabanında) ---------- */
+const AYAR_VARSAYILAN = [
+    'firma_ad' => '',
+    'firma_vkn' => '',
+    'uygulama_ad' => 'Cari Takip',
+    'kdv_oranlari' => '20,18,10,8,1,0',
+    'varsayilan_kdv' => '20',
+    'odeme_yontemleri' => "Havale / EFT\nNakit\nKredi kartı\nÇek\nSenet\nMahsup",
+    'ag_gun' => '20',
+    'logo_surum' => '',
+    'logo_koyu' => 'normal',
+];
+const LOGO_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+function ayarlar(): array {
+    if (isset($GLOBALS['__ayar_cache'])) return $GLOBALS['__ayar_cache'];
+    $a = AYAR_VARSAYILAN;
+    try { foreach (db()->query("SELECT anahtar, deger FROM ayarlar WHERE anahtar <> 'logo_data'") as $r) $a[$r['anahtar']] = $r['deger']; }
+    catch (Throwable $t) { /* tablo henüz yok: varsayılanlar */ }
+    return $GLOBALS['__ayar_cache'] = $a;
+}
+function ayar(string $k): string { return (string)(ayarlar()[$k] ?? ''); }
+function ayar_yaz(string $k, string $v): void {
+    db()->prepare('INSERT INTO ayarlar (anahtar, deger) VALUES (?, ?) ON DUPLICATE KEY UPDATE deger = VALUES(deger)')->execute([$k, $v]);
+    unset($GLOBALS['__ayar_cache']);
+}
+/** Arayüze giden ayarlar (logo verisi hariç). */
+function ayarlar_genel(bool $tazele = false): array {
+    if ($tazele) unset($GLOBALS['__ayar_cache']);
+    $a = ayarlar(); unset($a['logo_mime']);
+    $a['logo_url'] = logo_url() ?? '';
+    return $a;
+}
+function marka_ad(): string { return ayar('uygulama_ad') ?: AYAR_VARSAYILAN['uygulama_ad']; }
+function logo_url(): ?string { $v = ayar('logo_surum'); return $v !== '' ? 'api.php?a=logo&v=' . rawurlencode($v) : null; }
+/** Logo varsa <img>, yoksa firma/uygulama adı (giriş ekranı, menü ve kurulum için). */
+function marka_html(string $sinif = 'logo'): string {
+    $u = logo_url(); $ad = ayar('firma_ad') ?: marka_ad();
+    return $u ? '<img class="' . e($sinif) . '" src="' . e($u) . '" alt="' . e($ad) . '">' : '<span class="' . e($sinif) . ' logo-yazi">' . e($ad) . '</span>';
 }

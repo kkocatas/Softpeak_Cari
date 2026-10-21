@@ -1,4 +1,4 @@
--- Softpeak Cari — MySQL / MariaDB şeması (utf8mb4)
+-- Cari Takip — MySQL / MariaDB şeması (utf8mb4)
 -- setup.php bu dosyayı otomatik çalıştırır; elle kurmak isterseniz phpMyAdmin > SQL sekmesine yapıştırın.
 
 CREATE TABLE IF NOT EXISTS kullanicilar (
@@ -118,3 +118,9 @@ CREATE TABLE IF NOT EXISTS giris_denemeleri (
   zaman DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY ix_ip (ip, zaman)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Firma ayarları: firma adı, VKN, uygulama adı, logo, KDV oranları, ödeme yöntemleri vb.
+CREATE TABLE IF NOT EXISTS ayarlar (
+  anahtar VARCHAR(50) NOT NULL PRIMARY KEY,
+  deger MEDIUMTEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;

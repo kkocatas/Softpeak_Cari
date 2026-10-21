@@ -32,7 +32,7 @@ function check_env(array &$msgs, array &$errs): void {
         }
     } catch (Throwable $t) {
         $docroot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: '(bilinmiyor)';
-        $errs[] = 'PDF klasörü oluşturulamadı: ' . $dir . '. Dosya Yöneticisi\'nde en üst dizinde (web kök dizininizin yanında) softpeak-faturalar adlı klasörü elle açın ve config.php içinde pdf_dir değerini \'auto\' yapın.';
+        $errs[] = 'PDF klasörü oluşturulamadı: ' . $dir . '. Dosya Yöneticisi\'nde en üst dizinde (web kök dizininizin yanında) cari-belgeler adlı klasörü elle açın ve config.php içinde pdf_dir değerini \'auto\' yapın.';
         $msgs[] = 'Bilgi: Sunucudaki web kök dizini ' . $docroot . ' · PHP erişim sınırı (open_basedir): ' . (ini_get('open_basedir') ?: 'yok');
     }
     if (!is_https()) $msgs[] = 'Uyarı: Sayfa HTTPS üzerinden açılmamış. Adresi https:// ile açın; açılmıyorsa hosting panelinden ücretsiz SSL sertifikasını (Let\'s Encrypt) etkinleştirin. Şifreler şifresiz gönderilmesin.';
@@ -48,6 +48,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $sql = preg_replace('/^--.*$/m', '', $sql);
                 foreach (array_filter(array_map('trim', explode(';', $sql))) as $stmt) db()->exec($stmt);
                 $msgs[] = 'Tablolar oluşturuldu.';
+                $_SESSION = []; ensure_schema();
+                $fa = mb_substr(trim((string)($_POST['firma_ad'] ?? '')), 0, 150); $fv = preg_replace('/\D/', '', (string)($_POST['firma_vkn'] ?? ''));
+                if ($fv !== '' && !preg_match('/^\d{10,11}$/', $fv)) $errs[] = 'Firma VKN 10, TCKN 11 haneli olmalı.';
+                else { if ($fa !== '') ayar_yaz('firma_ad', $fa); if ($fv !== '') ayar_yaz('firma_vkn', $fv); if ($fa !== '' || $fv !== '') $msgs[] = 'Firma bilgileri kaydedildi. Logo ve diğer ayarlar uygulamadaki Ayarlar ekranından değiştirilebilir.'; }
                 $n = (int)db()->query('SELECT COUNT(*) FROM kullanicilar')->fetchColumn();
                 $add = function (string $user, string $ad, string $pass, string $rol) use (&$errs, &$msgs) {
                     if ($user === '') return;
@@ -68,10 +72,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
-?><!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Softpeak Cari · Kurulum</title><link rel="stylesheet" href="assets/app.css"></head>
+?><!doctype html><html lang="tr" data-logo-koyu="<?= e(ayar('logo_koyu') ?: 'normal') ?>"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title><?= e(marka_ad()) ?> · Kurulum</title><link rel="stylesheet" href="assets/app.css"></head>
 <body class="auth"><main class="auth-box" style="max-width:560px">
-<img class="logo" src="assets/logo.png" alt="Softpeak"><h1>Kurulum</h1>
+<?= marka_html() ?><h1>Kurulum</h1>
 <?php foreach ($errs as $m) echo '<div class="err">' . e($m) . '</div>'; ?>
 <?php foreach ($msgs as $m) echo '<div class="' . ((str_starts_with($m, 'Uyarı') || str_starts_with($m, 'Bilgi')) ? 'err' : 'ok-msg') . '">' . e($m) . '</div>'; ?>
 <?php if ($done): ?>
@@ -79,8 +83,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <?php else: ?>
 <form method="post" class="form" autocomplete="off">
   <label class="f full">Kurulum anahtarı (config.php &gt; setup_key)<input type="password" name="key" required></label>
+  <h2 class="full">Firma</h2>
+  <label class="f">Firma unvanı<input name="firma_ad" value="<?= e($_POST['firma_ad'] ?? '') ?>" placeholder="Faturalarda görünen unvan"></label>
+  <label class="f">VKN<input name="firma_vkn" inputmode="numeric" value="<?= e($_POST['firma_vkn'] ?? '') ?>" placeholder="10 haneli vergi no"></label>
   <h2 class="full">Yönetici (siz)</h2>
-  <label class="f">Kullanıcı adı<input name="u1" value="<?= e($_POST['u1'] ?? 'kivanc') ?>" required></label>
+  <label class="f">Kullanıcı adı<input name="u1" value="<?= e($_POST['u1'] ?? '') ?>" required></label>
   <label class="f">Ad soyad<input name="a1" value="<?= e($_POST['a1'] ?? '') ?>"></label>
   <label class="f full">Şifre (en az 10 karakter)<input type="password" name="p1" minlength="10" required></label>
   <h2 class="full">Mali müşavir (salt okunur, isteğe bağlı)</h2>

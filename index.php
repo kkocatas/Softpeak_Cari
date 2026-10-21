@@ -7,15 +7,17 @@ header('Cache-Control: no-store');
 $user = null;
 try { $user = current_user(); }
 catch (Throwable $t) { http_response_code(500); exit('Veritabanına bağlanılamadı. config.php ayarlarını kontrol edin veya setup.php ile kurulumu tamamlayın.'); }
-$v = '15';
+$v = '17';
+$marka = 'Cari Takip'; $logo = null; $logoKoyu = 'normal';
+try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logoKoyu = ayar('logo_koyu') ?: 'normal'; } catch (Throwable $t) { /* ayarlar okunamazsa varsayılan ad */ }
 ?><!doctype html>
-<html lang="tr">
+<html lang="tr" data-logo-koyu="<?= e($logoKoyu) ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
-<title>Softpeak Cari</title>
-<link rel="icon" href="assets/logo.png">
+<title><?= e($marka) ?></title>
+<?php if ($logo): ?><link rel="icon" href="<?= e($logo) ?>"><?php endif; ?>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -24,8 +26,8 @@ $v = '15';
 <?php if (!$user): ?>
 <body class="auth">
 <main class="auth-box">
-  <img class="logo" src="assets/logo.png" alt="Softpeak">
-  <h1>Cari takip</h1>
+  <?= marka_html() ?>
+  <h1><?= e($marka) ?></h1>
   <p class="muted small">Devam etmek için giriş yapın.</p>
   <form id="login" class="form" style="grid-template-columns:1fr">
     <label class="f">Kullanıcı adı<input id="l-user" name="kullanici" autocomplete="username" required autofocus></label>
@@ -54,7 +56,7 @@ document.getElementById('login').addEventListener('submit', async e => {
 <body>
 <div class="app">
   <aside class="rail">
-    <div class="brand"><img class="logo" src="assets/logo.png" alt="Softpeak"><small>Cari takip · sürüm <?= $v ?></small></div>
+    <div class="brand" id="brand"><?= marka_html() ?><small><?= e($marka) ?> · sürüm <?= $v ?></small></div>
     <nav class="nav" id="nav"></nav>
     <div class="who">
       <span><?= e($user['ad']) ?><br><span class="muted small"><?= $user['rol'] === 'admin' ? 'Yönetici' : 'Salt okunur' ?></span></span>
@@ -65,6 +67,7 @@ document.getElementById('login').addEventListener('submit', async e => {
 </div>
 <div id="modal-root"></div>
 <div id="toast-root"></div>
+<script>window.CARI_SURUM = <?= json_encode($v) ?>;</script>
 <script src="assets/app.js?v=<?= $v ?>"></script>
 </body>
 <?php endif; ?>

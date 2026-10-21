@@ -1,4 +1,4 @@
-# Softpeak Cari — Apache ayarları
+# Cari Takip — Apache ayarları
 Options -Indexes
 DirectoryIndex index.php
 

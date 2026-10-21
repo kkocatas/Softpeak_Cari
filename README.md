@@ -1,4 +1,4 @@
-# Softpeak Cari — kurulum rehberi
+# Cari Takip — kurulum rehberi
 
 Personel ve müşteri faturaları, projeler, ödeme/tahsilatlar ve cari bakiyeler için web uygulaması.
 Veriler sizin MySQL veritabanınızda, fatura PDF'leri sunucunuzdaki bir klasörde durur.
@@ -6,11 +6,11 @@ Veriler sizin MySQL veritabanınızda, fatura PDF'leri sunucunuzdaki bir klasör
 **Gereken:** PHP 8.1 veya üstü (pdo_mysql, fileinfo, mbstring eklentileri), MySQL 5.7+ / MariaDB 10.3+, SSL sertifikası.
 
 > **Plesk kullanıyorsanız (ör. isimtescil.net):** aşağıdaki adımlar aynı, yalnızca adlar farklı.
-> Web kök dizini `public_html` değil `httpdocs`; site ana dizini `/var/www/vhosts/softpeak.com.tr`.
+> Web kök dizini `public_html` değil `httpdocs`; site ana dizini `/var/www/vhosts/ALANADINIZ.com`.
 > Veritabanı: Web Siteleri ve Alan Adları > Veritabanları > **Veritabanı Ekle** (host: `localhost`).
-> PDF klasörü: Dosya Yöneticisi'nde en üst dizinde, `httpdocs`'un yanında `softpeak-faturalar` klasörünü açın; `pdf_dir` = `'auto'` bırakın.
+> PDF klasörü: Dosya Yöneticisi'nde en üst dizinde, `httpdocs`'un yanında `cari-belgeler` klasörünü açın; `pdf_dir` = `'auto'` bırakın.
 > Uygulama klasörü: `httpdocs/cari`. Yükleme sınırı: PHP Ayarları > `upload_max_filesize` 25M, `post_max_size` 26M.
-> **Windows (IIS) sunucu** ise (yollar `C:\Inetpub\vhosts\...` biçimindeyse): `.htaccess` yerine pakette gelen `web.config` geçerlidir, ayrıca bir şey yapmanız gerekmez. Uygulama `softpeak-faturalar` klasörünü açamazsa PDF'leri kendi içindeki `pdf-arsiv` klasöründe tutar; bu klasör `web.config` ile dışarıdan erişime kapalıdır. Yedek alırken `httpdocs/cari/pdf-arsiv` klasörünü de dahil edin.
+> **Windows (IIS) sunucu** ise (yollar `C:\Inetpub\vhosts\...` biçimindeyse): `.htaccess` yerine pakette gelen `web.config` geçerlidir, ayrıca bir şey yapmanız gerekmez. Uygulama `cari-belgeler` klasörünü açamazsa PDF'leri kendi içindeki `pdf-arsiv` klasöründe tutar; bu klasör `web.config` ile dışarıdan erişime kapalıdır. Yedek alırken `httpdocs/cari/pdf-arsiv` klasörünü de dahil edin.
 > PHP sürümü: PHP Ayarları'nda 8.2 veya 8.3 seçin (8.0 da çalışır ama artık güvenlik güncellemesi almıyor).
 
 ## 1. Veritabanını oluşturun
@@ -23,15 +23,15 @@ cPanel > **MySQL Veritabanları**:
 
 ## 2. PDF klasörünü oluşturun
 
-cPanel > **Dosya Yöneticisi**'nde ana dizininizde (public_html'in yanında, **içinde değil**) `softpeak-faturalar` adında bir klasör açın.
-Tam yolu not edin: genellikle `/home/CPANELKULLANICI/softpeak-faturalar`.
+cPanel > **Dosya Yöneticisi**'nde ana dizininizde (public_html'in yanında, **içinde değil**) `cari-belgeler` adında bir klasör açın.
+Tam yolu not edin: genellikle `/home/CPANELKULLANICI/cari-belgeler`.
 
 > PDF'lerin public_html dışında durması önemli. İçeride olursa, dosya adını tahmin eden biri faturayı giriş yapmadan indirebilir. Uygulama PDF'leri yalnızca giriş yapmış kullanıcılara verir.
 
 ## 3. Dosyaları yükleyin
 
 1. Zip'i bilgisayarınızda açın.
-2. Dosya Yöneticisi'nde `public_html/cari` klasörünü oluşturun (uygulama `https://softpeak.com.tr/cari` adresinde çalışır; isterseniz başka bir ad ya da alt alan adı kullanabilirsiniz).
+2. Dosya Yöneticisi'nde `public_html/cari` klasörünü oluşturun (uygulama `https://ALANADINIZ.com/cari` adresinde çalışır; isterseniz başka bir ad ya da alt alan adı kullanabilirsiniz).
 3. İçindeki her şeyi bu klasöre yükleyin. `.htaccess` gizli dosyadır; Dosya Yöneticisi'nde Ayarlar > "Gizli dosyaları göster" ile görünür.
 
 ## 4. Ayarları yapın
@@ -42,16 +42,18 @@ Tam yolu not edin: genellikle `/home/CPANELKULLANICI/softpeak-faturalar`.
 |---|---|
 | `db_name`, `db_user`, `db_pass` | 1. adımdaki veritabanı bilgileri |
 | `pdf_dir` | 2. adımdaki tam yol |
-| `softpeak_vkn` | Softpeak'in VKN'si (toplu PDF aktarımında gelen/kesilen ayrımı için) |
+| `timezone` | Saat dilimi (varsayılan `Europe/Istanbul`) |
 | `setup_key` | Uzun, rastgele bir metin; yalnızca kurulumda bir kez kullanılır |
 
 ## 5. Kurulumu çalıştırın
 
-1. Tarayıcıda `https://softpeak.com.tr/cari/setup.php` adresini açın.
+1. Tarayıcıda `https://ALANADINIZ.com/cari/setup.php` adresini açın.
 2. Kurulum anahtarını, kendi kullanıcı adı ve şifrenizi, isterseniz mali müşavirin hesabını girin, **Kur**'a basın.
 3. "Kurulum tamamlandı" yazısını görünce **`setup.php` dosyasını sunucudan silin.**
 
-Giriş adresi: `https://softpeak.com.tr/cari/`
+**Firma bilgileri:** Kurulumda firma unvanı ve VKN sorulur. Logo, uygulama adı, KDV oranları, ödeme yöntemleri ve A/G raporu gün sayısı giriş yaptıktan sonra **Ayarlar → Firma ve uygulama** bölümünden girilir. Bu bilgiler kodda değil veritabanında tutulur; aynı kod farklı firmalara değişiklik yapmadan kurulabilir.
+
+Giriş adresi: `https://ALANADINIZ.com/cari/`
 
 ## 6. HTTPS ve yükleme sınırı
 
@@ -73,7 +75,7 @@ Giriş adresi: `https://softpeak.com.tr/cari/`
 
 ## Yedekleme
 
-Faturalarınız bu sunucuda tek kopya. cPanel > **Yedekleme** (veya JetBackup) ile hem veritabanını hem `softpeak-faturalar` klasörünü düzenli yedekleyin; ayda bir yedeği bilgisayarınıza da indirin.
+Faturalarınız bu sunucuda tek kopya. cPanel > **Yedekleme** (veya JetBackup) ile hem veritabanını hem `cari-belgeler` klasörünü düzenli yedekleyin; ayda bir yedeği bilgisayarınıza da indirin.
 
 ## Dosyalar
 
@@ -83,4 +85,4 @@ Faturalarınız bu sunucuda tek kopya. cPanel > **Yedekleme** (veya JetBackup) i
 | `api.php` | Veri ve PDF işlemleri (oturum, yetki ve CSRF kontrollü) |
 | `setup.php` | Tek seferlik kurulum; kurulumdan sonra silin |
 | `lib/schema.sql` | Veritabanı tabloları (phpMyAdmin'de elle de çalıştırılabilir) |
-| `assets/` | Arayüz, logo ve PDF okuyucu (pdf.js, Apache 2.0 lisanslı) |
+| `assets/` | Arayüz, PDF okuyucu (pdf.js, Apache 2.0) ve zip okuyucu (JSZip, MIT) |

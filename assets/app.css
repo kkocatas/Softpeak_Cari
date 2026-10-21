@@ -6,17 +6,17 @@
   --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --f-body:"Instrument Sans", "Segoe UI", system-ui, sans-serif;
   --f-num:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
-  --r:8px; --logo-filter:none;
+  --r:8px; --logo-filter:none; --logo-bg:transparent;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#0f1514; --surface:#161e1c; --sunk:#1d2826; --line:#2b3835; --fg:#e4ecea; --muted:#94a5a0;
   --accent:#5fc2b5; --accent-fg:#06221f; --accent-soft:#183a36;
-  --debit:#f08a7c; --debit-soft:#3a201c; --credit:#6fd394; --credit-soft:#16301f; --warn:#e5b94a; --warn-soft:#352b12; --logo-filter:invert(1) brightness(.92);
+  --debit:#f08a7c; --debit-soft:#3a201c; --credit:#6fd394; --credit-soft:#16301f; --warn:#e5b94a; --warn-soft:#352b12; --logo-filter:none; --logo-bg:transparent;
   color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#0f1514; --surface:#161e1c; --sunk:#1d2826; --line:#2b3835; --fg:#e4ecea; --muted:#94a5a0;
   --accent:#5fc2b5; --accent-fg:#06221f; --accent-soft:#183a36;
-  --debit:#f08a7c; --debit-soft:#3a201c; --credit:#6fd394; --credit-soft:#16301f; --warn:#e5b94a; --warn-soft:#352b12; --logo-filter:invert(1) brightness(.92);
+  --debit:#f08a7c; --debit-soft:#3a201c; --credit:#6fd394; --credit-soft:#16301f; --warn:#e5b94a; --warn-soft:#352b12; --logo-filter:none; --logo-bg:transparent;
   color-scheme:dark}
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -214,3 +214,32 @@ table.agr td.b{color:var(--debit)}
 table.agr th,table.agr td{padding:8px 7px;font-size:12.5px}
 table.agr th{white-space:normal;line-height:1.25;vertical-align:bottom}
 table.agr td:first-child{white-space:nowrap}
+
+/* Firma logosu: koyu temada renkli logolar bozulmasın diye açık zemin üzerinde gösterilir */
+.logo{background:none;border-radius:0;max-height:64px;object-fit:contain;object-position:left center}
+.logo-yazi{display:block;font-family:var(--f-display);font-weight:700;font-size:18px;line-height:1.2;color:var(--fg);background:none;padding:0;margin-bottom:6px;overflow-wrap:anywhere}
+.auth-box .logo-yazi{font-size:22px}
+.firma-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+.logo-ayar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:42px}
+.logo-onizleme{max-height:48px;max-width:180px;object-fit:contain;background:none}
+.f>span:first-child{font-size:12px;font-weight:600;color:var(--muted)}
+.print-head b{font-family:var(--f-display);font-size:16px}
+@media (max-width:720px){.firma-form{grid-template-columns:minmax(0,1fr)}}
+
+/* Koyu temada logo: arka plan eklenmez; tek renkli koyu logolar için beyaza çevirme seçeneği (Ayarlar) */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"])[data-logo-koyu="beyaz"] img.logo, :root:not([data-theme="light"])[data-logo-koyu="beyaz"] .logo-onizleme{filter:brightness(0) invert(1) opacity(.92)}
+  :root:not([data-theme="light"])[data-logo-koyu="ters"] img.logo, :root:not([data-theme="light"])[data-logo-koyu="ters"] .logo-onizleme{filter:invert(1) hue-rotate(180deg)}
+}
+:root[data-theme="dark"][data-logo-koyu="beyaz"] img.logo, :root[data-theme="dark"][data-logo-koyu="beyaz"] .logo-onizleme{filter:brightness(0) invert(1) opacity(.92)}
+:root[data-theme="dark"][data-logo-koyu="ters"] img.logo, :root[data-theme="dark"][data-logo-koyu="ters"] .logo-onizleme{filter:invert(1) hue-rotate(180deg)}
+@media print{img.logo,.print-head img{filter:none!important}}
+
+/* Firma unvanı: her sekmede üstte sabit */
+.firma-bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:6;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin:-20px -28px 20px;padding:12px 28px;background:var(--bg);border-bottom:1px solid var(--line)}
+.firma-bar .unvan{font-family:var(--f-display);font-weight:700;font-size:16px;letter-spacing:-.005em;overflow-wrap:anywhere;min-width:0}
+.firma-bar .vkn{font-family:var(--f-num);font-size:12px;color:var(--muted)}
+.firma-bar a{font-size:13px}
+@media (max-width:720px){.firma-bar{margin:-20px -16px 16px;padding:10px 16px;top:calc(env(safe-area-inset-top,0px) + 58px)}.firma-bar .unvan{font-size:14px}}
+@media print{.firma-bar{display:none}}
+@media (max-width:720px){.rail{height:56px;box-sizing:border-box}.rail .logo{max-height:34px}.firma-bar{top:calc(env(safe-area-inset-top,0px) + 56px)}}

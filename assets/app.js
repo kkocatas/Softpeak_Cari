@@ -1,11 +1,11 @@
-/* Softpeak Cari — arayüz. Veriler api.php üzerinden MySQL'de, fatura PDF'leri sunucudaki klasörde. */
+/* Cari Takip — arayüz. Veriler api.php üzerinden MySQL'de, fatura PDF'leri sunucudaki klasörde. */
 (function () {
 "use strict";
 const COLS = ["cariler", "projeler", "faturalar", "hareketler"];
 const S = {
-  me: null, csrf: "", softpeakVkn: "", pdfMaxMb: 20, canWrite: false, loaded: false,
+  me: null, csrf: "", firmaVkn: "", ay: {}, pdfMaxMb: 20, canWrite: false, loaded: false,
   data: { cariler: [], projeler: [], faturalar: [], hareketler: [], dagitim: [] },
-  agGun: (() => { try { const x = localStorage.getItem("spcari-ag-gun"); return x !== null && x !== "" ? x : 20; } catch (e) { return 20; } })(),
+  agGun: (() => { try { const x = localStorage.getItem("cari-ag-gun"); return x !== null && x !== "" ? x : null; } catch (e) { return null; } })(),
   rTip: "personel", rBas: "", rBit: "", rQ: "", rAcik: {}, fDurum: "tum",
   view: "ozet", detail: null, donem: ymNow(), fTur: "tum", fDonem: "", fQ: "", hTur: "tum", hQ: "",
   modal: null, imp: [], users: null, log: null, selPer: new Set(), selFat: new Set(), selFatCari: null,
@@ -40,11 +40,26 @@ function calcF(f) {
   return { matrah: r2(m), kdv: r2(k), tevkif: r2(t), stopaj: r2(s), net: r2(m + k - t - s), brut: r2(m + k) };
 }
 function pdfUrl(id, indir) { return "api.php?a=pdf&id=" + encodeURIComponent(id) + (indir ? "&indir=1" : ""); }
+/* ---------- firma ayarlarından gelen değerler (koda gömülü değil) ---------- */
+function firmaAd() { return (S.ay && S.ay.firma_ad) || "Firma"; }
+function vKdv() { const x = num(S.ay && S.ay.varsayilan_kdv); return x >= 0 && S.ay && S.ay.varsayilan_kdv !== undefined && S.ay.varsayilan_kdv !== "" ? x : 20; }
+function kdvListe() { const l = String((S.ay && S.ay.kdv_oranlari) || "20,18,10,8,1,0").split(",").map(Number).filter(x => !isNaN(x)); return l.length ? l : [20]; }
+function kdvOpts(sel) { const l = kdvListe().slice(); if (sel != null && sel !== "" && !l.includes(+sel)) l.push(+sel); return l.map(x => opt(x, "%" + String(x).replace(".", ","), sel)).join(""); }
+function odemeListe() { const l = String((S.ay && S.ay.odeme_yontemleri) || "Havale / EFT").split(/\n/).map(x => x.trim()).filter(Boolean); return l.length ? l : ["Havale / EFT"]; }
+function odemeOpts(sel) { const l = odemeListe().slice(); if (sel && !l.includes(sel)) l.push(sel); return l.map(x => opt(x, x, sel || l[0])).join(""); }
+function firmaBar() {
+  const a = S.ay || {};
+  if (!a.firma_ad) return S.canWrite ? '<div class="firma-bar"><span class="muted small">Firma unvanı girilmemiş.</span><a href="#" data-nav="ayar">Ayarlar\'dan girin</a></div>' : "";
+  return '<div class="firma-bar"><span class="unvan">' + esc(a.firma_ad) + "</span>" + (a.firma_vkn ? '<span class="vkn">VKN ' + esc(a.firma_vkn) + "</span>" : "") + "</div>";
+}
+function logoKoyuUygula() { document.documentElement.setAttribute("data-logo-koyu", (S.ay && S.ay.logo_koyu) || "normal"); }
+function logoSrc() { return (S.ay && S.ay.logo_url) || ""; }
+function csvAd(ek) { const f = String((S.ay && S.ay.firma_ad) || "cari").toLocaleLowerCase("tr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "cari"; return f + "-" + ek; }
 function belgeEtiket(f) { return f.belgeTur && f.belgeTur !== "pdf" ? "e-Fatura" : "PDF"; }
 function pdfLink(f) { return f.pdf ? '<a class="pdf-link" href="' + pdfUrl(f.id) + '" target="_blank" rel="noopener" data-stop="1" title="' + esc(f.pdfAd || "Fatura") + '">' + belgeEtiket(f) + "</a>" : ""; }
 
 /* Ekstre kuralı: kesilen fatura ve ödeme = Borç; gelen fatura ve tahsilat = Alacak.
-   Bakiye > 0 (B): karşı taraf bize borçlu. Bakiye < 0 (A): Softpeak borçlu. */
+   Bakiye > 0 (B): karşı taraf bize borçlu. Bakiye < 0 (A): firma (biz) borçlu. */
 function movements(cariId, projeId) {
   const rows = [];
   S.data.faturalar.forEach(f => {
@@ -187,7 +202,7 @@ function renderNav() {
 }
 
 /* ---------- görünümler ---------- */
-function printHead(t) { return '<div class="print-head"><img src="assets/logo.png" alt=""><span>' + esc(t) + " · " + fd(today()) + "</span></div>"; }
+function printHead(t) { return '<div class="print-head">' + (logoSrc() ? '<img src="' + esc(logoSrc()) + '" alt="">' : "<b>" + esc(firmaAd()) + "</b>") + "<span>" + esc(t) + " · " + fd(today()) + "</span></div>"; }
 function topActions(extra) {
   return '<div class="actions">' + (extra || "") + '<button class="btn" data-act="print">Yazdır</button>' + (S.canWrite ? '<button class="btn" data-act="new-hareket">+ Ödeme / Tahsilat</button><button class="btn primary" data-act="new-fatura">+ Fatura</button>' : "") + "</div>";
 }
@@ -247,7 +262,7 @@ function chart() {
 function vCariList(tip) {
   const list = S.data.cariler.filter(c => c.tip === tip).sort((a, b) => a.ad.localeCompare(b.ad, "tr"));
   const title = tip === "personel" ? "Personel" : "Müşteriler";
-  let h = printHead(title) + '<div class="top"><div><h1>' + title + '</h1><div class="sub">' + (tip === "personel" ? "Softpeak'a fatura kesen, müşterilerde çalışan personel" : "Hizmet ve proje faturası kestiğiniz firmalar") + '</div></div><div class="actions"><button class="btn" data-act="print">Yazdır</button>' + (S.canWrite ? '<button class="btn primary" data-act="new-cari" data-tip="' + tip + '">+ ' + (tip === "personel" ? "Personel" : "Müşteri") + " ekle</button>" : "") + "</div></div>";
+  let h = printHead(title) + '<div class="top"><div><h1>' + title + '</h1><div class="sub">' + (tip === "personel" ? "Firmanıza fatura kesen, müşterilerde çalışan personel" : "Hizmet ve proje faturası kestiğiniz firmalar") + '</div></div><div class="actions"><button class="btn" data-act="print">Yazdır</button>' + (S.canWrite ? '<button class="btn primary" data-act="new-cari" data-tip="' + tip + '">+ ' + (tip === "personel" ? "Personel" : "Müşteri") + " ekle</button>" : "") + "</div></div>";
   if (!list.length) return h + '<div class="panel"><div class="empty"><strong>Henüz ' + (tip === "personel" ? "personel" : "müşteri") + " yok</strong>" + (tip === "personel" ? "Personeli, çalıştığı müşteriyi ve aylık fatura bedellerini girin." : "Önce müşteriyi ekleyin; personel ve projeler müşteriye bağlanır.") + "</div></div>";
   const selOn = tip === "personel" && S.canWrite;
   if (selOn) { const ids = new Set(list.map(c => c.id)); [...S.selPer].forEach(x => { if (!ids.has(x)) S.selPer.delete(x); }); }
@@ -298,11 +313,11 @@ function vCari(id) {
     '<div class="actions"><button class="btn" data-act="print">Ekstreyi yazdır</button>' + (S.canWrite ? '<button class="btn" data-act="edit-cari" data-id="' + id + '">Düzenle</button><button class="btn" data-act="new-hareket" data-cari="' + id + '">+ ' + (c.tip === "personel" ? "Ödeme" : "Tahsilat") + '</button><button class="btn primary" data-act="new-fatura" data-cari="' + id + '">+ ' + (c.tip === "personel" ? "Gelen fatura" : "Kesilen fatura") + "</button>" : "") + "</div></div>";
   const fs = S.data.faturalar.filter(f => f.cariId === id), hs = S.data.hareketler.filter(x => x.cariId === id);
   const fat = fs.reduce((s, f) => s + calcF(f).net, 0), od = hs.reduce((s, x) => s + num(x.tutar), 0), sonOd = hs.map(x => x.tarih).sort().pop();
-  h += '<div class="kpis">' + kpi("Bakiye", balHtml(b), b > 0 ? "Karşı taraf borçlu" : b < 0 ? "Softpeak borçlu" : "Kapalı") +
+  h += '<div class="kpis">' + kpi("Bakiye", balHtml(b), b > 0 ? "Karşı taraf borçlu" : b < 0 ? "Firmanız borçlu" : "Kapalı") +
     kpi(c.tip === "personel" ? "Gelen faturalar" : "Kesilen faturalar", tl(fat), fs.length + " fatura, net") +
     kpi(c.tip === "personel" ? "Yapılan ödemeler" : "Alınan tahsilatlar", tl(od), hs.length + " işlem") +
     kpi(c.tip === "personel" ? "Son ödeme" : "Son tahsilat", sonOd ? fd(sonOd) : "—", c.tip === "personel" && (c.aylikAlis || c.aylikSatis) ? "Net A/G " + tl(r2(num(c.aylikSatis) - num(c.aylikAlis))) : "") + "</div>";
-  if (c.tip === "personel" && (c.aylikAlis || c.aylikSatis)) { const ko = c.kdvOran ?? 20, ms = num(c.aylikSatis), fa = num(c.aylikAlis);
+  if (c.tip === "personel" && (c.aylikAlis || c.aylikSatis)) { const ko = c.kdvOran ?? vKdv(), ms = num(c.aylikSatis), fa = num(c.aylikAlis);
     h += '<div class="panel ag-ozet"><div><span class="lbl">Müşteri A/G</span><b>' + tl(ms) + '</b><span class="small muted">KDV\'li ' + tl(ms * (1 + ko / 100)) + '</span></div><div><span class="lbl">Firma A/G</span><b>' + tl(fa) + '</b><span class="small muted">KDV\'li ' + tl(fa * (1 + ko / 100)) + '</span></div><div><span class="lbl">Net A/G</span><b class="' + (ms - fa < 0 ? "b" : "") + '">' + tl(ms - fa) + (ms > 0 ? ' <span class="small muted">' + agYuzde(ms, fa) + "</span>" : "") + '</b><span class="small muted">KDV\'li ' + tl((ms - fa) * (1 + ko / 100)) + '</span></div><div><span class="lbl">KDV oranı</span><b>%' + ko + "</b></div></div>"; }
   if (c.notlar) h += '<div class="panel small">' + esc(c.notlar) + "</div>";
   if (S.selFatCari !== id) { S.selFat = new Set(); S.selFatCari = id; }
@@ -398,7 +413,7 @@ function vHareket() {
 function vArsiv() {
   let h = '<div class="top"><div><h1>PDF arşiv yükle</h1><div class="sub">Geçmiş faturaları toplu yükleyin. Fatura no, tarih, VKN ve tutarlar PDF\'in içinden okunur; kaydetmeden önce kontrol edin.</div></div></div>';
   h += '<label class="drop" id="drop" for="imp-files"><strong>Fatura PDF\'lerini veya e-Fatura zip/XML dosyalarını buraya bırakın</strong>ya da tıklayıp seçin · birden çok dosya seçebilirsiniz · dosya başına en fazla ' + S.pdfMaxMb + ' MB<br><span class="small">GİB e-Arşiv / e-Fatura portalından indirdiğiniz zip dosyaları doğrudan okunur; tutarlar ve tarihler XML\'den kesin olarak alınır.</span><input type="file" id="imp-files" accept="application/pdf,.pdf,.zip,application/zip,.xml,text/xml,application/xml" multiple hidden></label>';
-  if (!S.softpeakVkn) h += '<p class="small muted">İpucu: config.php içine Softpeak\'in VKN\'sini (softpeak_vkn) yazarsanız, faturanın gelen mi kesilen mi olduğu daha doğru tahmin edilir.</p>';
+  if (!S.firmaVkn) h += '<p class="small muted">İpucu: Ayarlar ekranında firmanızın VKN\'sini girerseniz, faturanın gelen mi kesilen mi olduğu daha doğru tahmin edilir.</p>';
   if (!S.imp.length) return h;
   const bekleyen = S.imp.filter(r => r.st !== "ok").length;
   h += '<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>' + S.imp.length + " dosya</h2><div class=\"actions\">" + (S.imp.some(r => r.st === "ok") ? '<button class="btn" data-act="imp-clear-ok">Kaydedilenleri listeden çıkar</button>' : "") + '<button class="btn" data-act="imp-clear">Listeyi temizle</button><button class="btn primary" data-act="imp-save"' + (bekleyen && !S.impBusy ? "" : " disabled") + ">" + (S.impBusy ? "Kaydediliyor…" : bekleyen + " faturayı kaydet") + "</button></div></div>";
@@ -413,7 +428,7 @@ function vArsiv() {
       '<td><input class="w-d" type="date" data-f="tarih" value="' + esc(r.tarih) + '"' + dis + "></td>" +
       '<td><input class="w-d" type="month" data-f="donem" value="' + esc(r.donem) + '"' + dis + "></td>" +
       '<td><input class="w-m num" inputmode="decimal" data-f="matrah" value="' + (r.matrah ? nf.format(r.matrah) : "") + '"' + dis + ">" + (r.odenecek ? '<div class="hint-row">Ödenecek: ' + tl(r.odenecek) + "</div>" : "") + "</td>" +
-      '<td><select class="w-s" data-f="kdvOran"' + dis + ">" + [20, 18, 10, 8, 1, 0].map(v => opt(v, "%" + v, r.kdvOran)).join("") + "</select></td>" +
+      '<td><select class="w-s" data-f="kdvOran"' + dis + ">" + kdvOpts(r.kdvOran) + "</select></td>" +
       '<td><select class="w-s" data-f="tevkifat"' + dis + ">" + [0, 2, 3, 4, 5, 7, 9, 10].map(v => opt(v, v ? v + "/10" : "Yok", r.tevkifat)).join("") + "</select></td>" +
       '<td class="small">' + ({ ok: '<span class="st-ok">Kaydedildi</span>', busy: '<span class="st-wait">Kaydediliyor…</span>', read: '<span class="st-wait">Okunuyor…</span>', err: '<span class="st-err">' + esc(r.err) + "</span>" }[r.st] || '<span class="st-wait">' + esc(r.note || "Kontrol edin") + "</span>") + "</td>" +
       "<td>" + (r.st !== "ok" && r.st !== "busy" ? '<button class="btn ghost" data-act="imp-del" data-row="' + i + '" aria-label="Listeden çıkar">✕</button>' : "") + "</td></tr>";
@@ -473,7 +488,7 @@ function parseUBL(xmlText) {
     if (kod === "0015" && r.kdvOran == null) r.kdvOran = yuzde;
     if (kod === "0003" && yuzde) r.stopajOran = yuzde;
   }));
-  if (r.kdvOran == null) r.kdvOran = 20;
+  if (r.kdvOran == null) r.kdvOran = vKdv();
   kids(R, "WithholdingTaxTotal").forEach(tt => kids(tt, "TaxSubtotal").forEach(st => { const y = num(txt(kid(st, "Percent"))); if (y) r.tevkifat = Math.round(y / 10); }));
   const satirlar = kids(R, "InvoiceLine").map(l => {
     const q = kid(l, "InvoicedQuantity"), it = kid(l, "Item");
@@ -604,12 +619,12 @@ function parseFatura(text) {
   return r;
 }
 function matchRow(r) {
-  const own = (S.softpeakVkn || "").trim();
+  const own = (S.firmaVkn || "").trim();
   const others = (r.vkns || []).filter(v => v !== own);
   let c = null; for (const v of others) { c = S.data.cariler.find(x => x.vkn && x.vkn.replace(/\D/g, "") === v); if (c) break; }
   if (c) { r.cariId = c.id; r.tur = c.tip === "personel" ? "gelen" : "kesilen"; }
   else r.vknHint = others[0] || "";
-  // Softpeak'in VKN'si biliniyorsa: alıcı Softpeak ise gelen, değilse kesilen
+  // Firmanın VKN'si biliniyorsa: alıcı firma ise gelen, değilse kesilen
   if (own && r.vkns && r.vkns.includes(own)) {
     if (r.aliciVkn) r.tur = r.aliciVkn === own ? "gelen" : "kesilen";
     else if (!c && others.length) r.tur = r.vkns.indexOf(own) < r.vkns.indexOf(others[0]) ? "kesilen" : "gelen";
@@ -621,7 +636,7 @@ async function addImportFiles(files) {
   const list = Array.from(files).filter(f => isPdfFile(f) || isZipFile(f) || isXmlFile(f));
   if (!list.length) { toast("PDF, e-Fatura zip veya XML dosyası seçin."); return; }
   if (list.length < files.length) toast((files.length - list.length) + " dosya atlandı (yalnızca PDF, zip, XML).");
-  const bos = () => ({ st: "read", err: "", tur: "gelen", cariId: "", no: "", tarih: "", donem: "", matrah: 0, kdvOran: 20, tevkifat: 0 });
+  const bos = () => ({ st: "read", err: "", tur: "gelen", cariId: "", no: "", tarih: "", donem: "", matrah: 0, kdvOran: vKdv(), tevkifat: 0 });
   for (const f of list) {
     if (f.size > max) { S.imp.push(Object.assign(bos(), { file: f, st: "err", err: "Dosya " + S.pdfMaxMb + " MB'tan büyük" })); render(); continue; }
     let parcalar;
@@ -635,12 +650,12 @@ async function addImportFiles(files) {
           const u = pc.ubl; r.kaynak = "xml"; r.text = u.ozet; r.aciklama = u.aciklama;
           Object.assign(r, { no: u.no, tarih: u.tarih, donem: u.donem, matrah: r2(u.matrah), kdvOran: u.kdvOran, tevkifat: u.tevkifat || 0, stopajOran: u.stopajOran || 0, odenecek: u.odenecek, vkns: u.vkns, aliciVkn: u.aliciVkn });
           matchRow(r);
-          const own = (S.softpeakVkn || "").trim();
+          const own = (S.firmaVkn || "").trim();
           if (!r.cariId) { const karsi = own && u.saticiVkn === own ? { id: u.aliciVkn, ad: u.aliciAd } : { id: u.saticiVkn, ad: u.saticiAd }; r.vknHint = karsi.id; r.adHint = karsi.ad; if (own) r.tur = u.saticiVkn === own ? "kesilen" : "gelen"; }
         } else {
           const txt = await pdfText(r.file); r.text = txt; r.aciklama = kalemler(txt);
           const p = parseFatura(txt);
-          Object.assign(r, { no: p.no || "", tarih: p.tarih || "", donem: p.donem || (p.tarih ? p.tarih.slice(0, 7) : ""), matrah: r2(p.matrah || 0), kdvOran: p.kdvOran ?? 20, tevkifat: p.tevkifat || 0, odenecek: p.odenecek || 0, vkns: p.vkns, aliciVkn: p.aliciVkn });
+          Object.assign(r, { no: p.no || "", tarih: p.tarih || "", donem: p.donem || (p.tarih ? p.tarih.slice(0, 7) : ""), matrah: r2(p.matrah || 0), kdvOran: p.kdvOran ?? vKdv(), tevkifat: p.tevkifat || 0, odenecek: p.odenecek || 0, vkns: p.vkns, aliciVkn: p.aliciVkn });
           matchRow(r);
           if (!txt.replace(/\s/g, "").length) r.noText = true;
         }
@@ -675,6 +690,7 @@ async function saveImports() {
 /* ---------- ayarlar ---------- */
 function vAyar() {
   let h = '<div class="top"><div><h1>Ayarlar</h1><div class="sub">' + esc(S.me.ad) + " · " + (S.canWrite ? "Yönetici" : "Salt okunur") + '</div></div><div class="actions"><button class="btn" data-act="logout">Çıkış yap</button></div></div>';
+  if (S.canWrite) h += firmaPanel();
   h += '<div class="grid2"><div class="panel"><h2>Şifremi değiştir</h2><form id="pw-form" class="form" style="grid-template-columns:1fr"><label class="f">Mevcut şifre<input type="password" id="pw-old" autocomplete="current-password" required></label><label class="f">Yeni şifre (en az 10 karakter)<input type="password" id="pw-new" autocomplete="new-password" minlength="10" required></label><div><button class="btn primary" type="submit">Şifreyi değiştir</button></div></form></div>';
   if (S.canWrite) {
     h += '<div class="panel"><div class="panel-head"><h2>Kullanıcılar</h2><button class="btn" data-act="new-user">+ Kullanıcı ekle</button></div>';
@@ -687,11 +703,46 @@ function vAyar() {
     h += '<div class="panel"><div class="panel-head"><h2>İşlem kaydı</h2><span class="small muted">Son 200 değişiklik</span></div>';
     if (!S.log) h += '<div class="empty">Yükleniyor…</div>';
     else if (!S.log.length) h += '<div class="empty">Henüz değişiklik yok.</div>';
-    else { const T = { cariler: "Cari", projeler: "Proje", faturalar: "Fatura", hareketler: "Ödeme/Tahsilat", kullanicilar: "Kullanıcı" }, I = { ekle: "Eklendi", guncelle: "Güncellendi", sil: "Silindi", pdf: "PDF eklendi", pdf_sil: "PDF kaldırıldı" };
-      h += '<div class="tw"><table><thead><tr><th>Zaman</th><th>Kişi</th><th>Kayıt</th><th>İşlem</th></tr></thead><tbody>' + S.log.map(l => '<tr><td class="small" style="white-space:nowrap">' + esc(l.zaman) + "</td><td>" + esc(l.kullanici || "—") + "</td><td>" + esc((T[l.tablo] || l.tablo) + " #" + l.kayit_id) + "</td><td>" + esc(I[l.islem] || l.islem) + "</td></tr>").join("") + "</tbody></table></div>"; }
+    else { const T = { cariler: "Cari", projeler: "Proje", faturalar: "Fatura", hareketler: "Ödeme/Tahsilat", kullanicilar: "Kullanıcı", ayarlar: "Ayarlar" }, I = { ekle: "Eklendi", guncelle: "Güncellendi", sil: "Silindi", pdf: "PDF eklendi", pdf_sil: "PDF kaldırıldı", logo: "Logo yüklendi", logo_sil: "Logo kaldırıldı" };
+      h += '<div class="tw"><table><thead><tr><th>Zaman</th><th>Kişi</th><th>Kayıt</th><th>İşlem</th></tr></thead><tbody>' + S.log.map(l => '<tr><td class="small" style="white-space:nowrap">' + esc(l.zaman) + "</td><td>" + esc(l.kullanici || "—") + "</td><td>" + esc((T[l.tablo] || l.tablo) + (l.kayit_id ? " #" + l.kayit_id : "")) + "</td><td>" + esc(I[l.islem] || l.islem) + "</td></tr>").join("") + "</tbody></table></div>"; }
     h += "</div>";
   }
   return h;
+}
+function firmaPanel() {
+  const a = S.ay || {};
+  return '<div class="panel"><div class="panel-head"><h2>Firma ve uygulama</h2><span class="small muted">Bu bilgiler kodda değil veritabanında tutulur; uygulamayı başka bir firma kullanacaksa buradan değiştirilir.</span></div>' +
+    '<form id="firma-form" class="form firma-form" novalidate>' +
+    '<label class="f">Firma unvanı<input id="a-firma" value="' + esc(a.firma_ad) + '" maxlength="150" placeholder="ör. Örnek Yazılım Ltd. Şti."></label>' +
+    '<label class="f">Firma VKN<input id="a-vkn" inputmode="numeric" value="' + esc(a.firma_vkn) + '" maxlength="11" placeholder="10 haneli vergi no"></label>' +
+    '<label class="f">Uygulama adı <span class="muted">(sekme başlığı, giriş ekranı)</span><input id="a-uyg" value="' + esc(a.uygulama_ad) + '" maxlength="60"></label>' +
+    '<div class="f"><span>Logo</span><div class="logo-ayar">' + (a.logo_url ? '<img class="logo-onizleme" src="' + esc(a.logo_url) + '" alt="Logo">' : '<span class="small muted">Logo yok; firma unvanı yazı olarak gösterilir.</span>') +
+      '<label class="btn" for="a-logo">' + (a.logo_url ? "Değiştir" : "Logo yükle") + '</label>' + (a.logo_url ? '<button type="button" class="btn danger" data-act="logo-sil">Kaldır</button>' : "") + '<input type="file" id="a-logo" accept="image/png,image/jpeg,image/webp,image/gif" hidden></div><span class="small muted">PNG, JPG, WEBP veya GIF · en fazla 1 MB · şeffaf arka planlı yatay logo önerilir</span></div>' +
+    '<label class="f">Koyu temada logo<select id="a-logokoyu">' + opt("normal", "Olduğu gibi göster", a.logo_koyu || "normal") + opt("beyaz", "Beyaz göster (siyah / tek renk logolar için)", a.logo_koyu) + opt("ters", "Renkleri ters çevir", a.logo_koyu) + '</select><span class="small muted">Logonun arka planı değişmez; yalnızca koyu temada logonun kendi rengi ayarlanır.</span></label>' +
+    '<label class="f">KDV oranları <span class="muted">(virgülle)</span><input id="a-kdv" value="' + esc(String(a.kdv_oranlari || "").split(",").join(", ")) + '" placeholder="20, 10, 1, 0"></label>' +
+    '<label class="f">Varsayılan KDV oranı<select id="a-vkdv">' + kdvListe().map(x => opt(x, "%" + x, a.varsayilan_kdv)).join("") + '</select></label>' +
+    '<label class="f">Ödeme yöntemleri <span class="muted">(her satıra bir tane)</span><textarea id="a-odeme" rows="4">' + esc(a.odeme_yontemleri) + '</textarea></label>' +
+    '<label class="f">A/G raporu varsayılan gün sayısı<input id="a-gun" type="number" min="0" max="31" value="' + esc(a.ag_gun) + '"></label>' +
+    '<div class="full"><button class="btn primary" type="submit">Kaydet</button></div></form></div>';
+}
+function markaYenile() {
+  const ad = (S.ay && S.ay.uygulama_ad) || "Cari Takip"; document.title = ad;
+  const b = document.getElementById("brand");
+  if (b) b.innerHTML = (logoSrc() ? '<img class="logo" src="' + esc(logoSrc()) + '" alt="' + esc(firmaAd()) + '">' : '<span class="logo logo-yazi">' + esc((S.ay && S.ay.firma_ad) || ad) + "</span>") + "<small>" + esc(ad) + " · sürüm " + esc(String(window.CARI_SURUM || "")) + "</small>";
+  let ic = document.querySelector('link[rel="icon"]'); if (logoSrc()) { if (!ic) { ic = document.createElement("link"); ic.rel = "icon"; document.head.appendChild(ic); } ic.href = logoSrc(); } else if (ic) ic.remove();
+}
+function ayarUygula(a) { S.ay = a || {}; S.firmaVkn = S.ay.firma_vkn || ""; logoKoyuUygula(); markaYenile(); render(); }
+async function firmaKaydet() {
+  try {
+    const j = await api("ayar_kaydet", { body: { firma_ad: v("a-firma"), firma_vkn: v("a-vkn"), uygulama_ad: v("a-uyg"), kdv_oranlari: v("a-kdv"), varsayilan_kdv: v("a-vkdv"), logo_koyu: v("a-logokoyu"), odeme_yontemleri: v("a-odeme"), ag_gun: v("a-gun") } });
+    ayarUygula(j.ayarlar); toast("Ayarlar kaydedildi");
+  } catch (e) { toast(e.message); }
+}
+async function logoYukle(file) {
+  if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) return toast("Logo PNG, JPG, WEBP veya GIF olmalı.");
+  if (file.size > 1048576) return toast("Logo en fazla 1 MB olabilir.");
+  const f = new FormData(); f.append("logo", file, file.name);
+  try { const j = await api("logo_yukle", { form: f }); ayarUygula(j.ayarlar); toast("Logo güncellendi"); } catch (e) { toast(e.message); }
 }
 async function loadAyar() {
   if (!S.canWrite) return;
@@ -709,7 +760,7 @@ function render() {
   if (S.detail && S.detail.type === "cari") h = vCari(S.detail.id);
   else if (S.detail && S.detail.type === "proje") h = vProje(S.detail.id);
   else h = ({ ozet: vOzet, personel: () => vCariList("personel"), musteri: () => vCariList("musteri"), proje: vProjeList, fatura: vFatura, hareket: vHareket, arsiv: vArsiv, rapor: vRapor, agrapor: vAgRapor, ayar: vAyar }[S.view] || vOzet)();
-  m.innerHTML = h;
+  m.innerHTML = firmaBar() + h;
   if (aid) { const el = document.getElementById(aid); if (el && el.closest("#main") && el.type !== "file") { el.focus(); try { if (sel != null) el.setSelectionRange(sel, sel); } catch (e) {} } }
 }
 
@@ -740,7 +791,7 @@ function renderModal() {
         '<label class="f">Müşteri A/G (KDV hariç)<input id="m-satis" inputmode="decimal" value="' + (r.aylikSatis ? nf.format(r.aylikSatis) : "") + '" placeholder="0,00"' + RO() + "></label>" +
         '<label class="f">Firma A/G (KDV hariç)<input id="m-alis" inputmode="decimal" value="' + (r.aylikAlis ? nf.format(r.aylikAlis) : "") + '" placeholder="0,00"' + RO() + "></label>" +
         '<label class="f">Net A/G<input id="m-net" readonly tabindex="-1" class="calc-out"></label>' +
-        '<label class="f">KDV oranı (%)<input id="m-agkdv" inputmode="decimal" value="' + (r.kdvOran ?? 20) + '"' + RO() + "></label>" +
+        '<label class="f">KDV oranı (%)<input id="m-agkdv" inputmode="decimal" value="' + (r.kdvOran ?? vKdv()) + '"' + RO() + "></label>" +
         '<label class="f">Müşteri A/G KDV\'li<input id="m-satis-k" readonly tabindex="-1" class="calc-out"></label>' +
         '<label class="f">Firma A/G KDV\'li<input id="m-alis-k" readonly tabindex="-1" class="calc-out"></label>' +
         '<label class="f">Net A/G KDV\'li<input id="m-net-k" readonly tabindex="-1" class="calc-out"></label>' +
@@ -773,7 +824,7 @@ function renderModal() {
       '<label class="f">Hizmet dönemi<input type="month" id="m-donem" value="' + esc(r.donem || p.donem || S.donem) + '"' + RO() + "></label>" +
       '<label class="f">Vade tarihi<input type="date" id="m-vade" value="' + esc(r.vade) + '"' + RO() + "></label>" +
       '<label class="f">Matrah (KDV hariç)<input id="m-matrah" inputmode="decimal" required value="' + (r.matrah != null ? nf.format(r.matrah) : "") + '" placeholder="0,00"' + RO() + "></label>" +
-      '<label class="f">KDV oranı<select id="m-kdv"' + RO() + ">" + [20, 18, 10, 8, 1, 0].map(v => opt(v, "%" + v, r.kdvOran ?? 20)).join("") + "</select></label>" +
+      '<label class="f">KDV oranı<select id="m-kdv"' + RO() + ">" + kdvOpts(r.kdvOran ?? vKdv()) + "</select></label>" +
       '<label class="f">KDV tevkifatı<select id="m-tev"' + RO() + ">" + [[0, "Yok"], [2, "2/10"], [3, "3/10"], [4, "4/10"], [5, "5/10"], [7, "7/10"], [9, "9/10"], [10, "Tam (10/10)"]].map(([v, l]) => opt(v, l, r.tevkifat ?? 0)).join("") + "</select></label>" +
       '<label class="f">Gelir vergisi stopajı<select id="m-stop"' + RO() + ">" + [0, 10, 15, 20].map(v => opt(v, v ? "%" + v : "Yok", r.stopajOran ?? 0)).join("") + "</select></label>" +
       '<div class="calc" id="m-calc"></div>' + (M.rec ? faturaOdemeleri(M.rec) : "") +
@@ -786,7 +837,7 @@ function renderModal() {
       '<label class="f full">' + (tur === "tahsilat" ? "Ödeme yapan müşteri" : "Ödeme yapılan personel / tedarikçi") + '<select id="m-cari" required' + RO() + ">" + cariOpts(tur === "tahsilat" ? "musteri" : "personel", cariId, "— Seçin —") + "</select></label>" +
       '<label class="f">Tarih<input type="date" id="m-tarih" value="' + esc(r.tarih || today()) + '"' + RO() + "></label>" +
       '<label class="f">Tutar<input id="m-tutar" inputmode="decimal" required value="' + (r.tutar != null ? nf.format(r.tutar) : "") + '" placeholder="0,00"' + RO() + "></label>" +
-      '<label class="f">Yöntem<select id="m-yontem"' + RO() + ">" + ["Havale / EFT", "Nakit", "Kredi kartı", "Çek", "Senet", "Mahsup"].map(v => opt(v, v, r.yontem || "Havale / EFT")).join("") + "</select></label>" +
+      '<label class="f">Yöntem<select id="m-yontem"' + RO() + ">" + odemeOpts(r.yontem) + "</select></label>" +
       '<label class="f">Proje<select id="m-proje"' + RO() + ">" + projeOpts(r.projeId || p.projeId, tur === "tahsilat" ? cariId : null) + "</select></label>" +
       '<div class="full small muted" id="m-hint"></div>' + '<div class="full" id="m-dag"></div>' +
       '<label class="f full">Açıklama<input id="m-acik" value="' + esc(r.aciklama) + '" placeholder="ör. Ağustos 2026 hizmet bedeli"' + RO() + "></label></div>";
@@ -804,7 +855,7 @@ function updCalc() {
 }
 function updAg() {
   const out = document.getElementById("m-net"); if (!out) return;
-  const ms = num(v("m-satis")), fa = num(v("m-alis")), ko = v("m-agkdv").trim() === "" ? 20 : num(v("m-agkdv")), k = 1 + ko / 100;
+  const ms = num(v("m-satis")), fa = num(v("m-alis")), ko = v("m-agkdv").trim() === "" ? vKdv() : num(v("m-agkdv")), k = 1 + ko / 100;
   out.value = tl(ms - fa) + (ms > 0 ? "  (" + agYuzde(ms, fa) + ")" : ""); out.classList.toggle("neg", ms - fa < 0);
   document.getElementById("m-satis-k").value = tl(ms * k);
   document.getElementById("m-alis-k").value = tl(fa * k);
@@ -831,7 +882,7 @@ async function saveModal() {
     if (tel && !/^[0-9+()\s.\-]{7,30}$/.test(tel)) return fail("Telefon numarasında yalnızca rakam, boşluk, +, ( ) ve - kullanın.");
     data = { tip: v("m-tip"), ad: v("m-ad").trim(), vkn: v("m-vkn").replace(/\D/g, ""), eposta: ep, telefon: tel, durum: v("m-durum"), notlar: v("m-not").trim() };
     if (data.tip === "personel") {
-      const ko = v("m-agkdv").trim() === "" ? 20 : num(v("m-agkdv"));
+      const ko = v("m-agkdv").trim() === "" ? vKdv() : num(v("m-agkdv"));
       if (!(ko >= 0 && ko <= 100)) return fail("KDV oranı 0 ile 100 arasında olmalı.");
       Object.assign(data, { musteriId: v("m-musteri"), aylikAlis: r2(num(v("m-alis"))), aylikSatis: r2(num(v("m-satis"))), kdvOran: ko, baslangic: v("m-bas") });
     }
@@ -929,7 +980,7 @@ function bulkModal() {
   if (!ids.length) return;
   const rows = ids.map(id => { const c = cari(id), b = bakiye(id); return '<tr><td><b>' + esc(c.ad) + '</b><div class="small muted">Bakiye ' + balHtml(b) + '</div></td><td class="num"><input class="num" style="max-width:150px" inputmode="decimal" data-b-id="' + id + '" value="' + (b < 0 ? nf.format(-b) : "") + '" placeholder="0,00" aria-label="' + esc(c.ad) + ' ödeme tutarı"></td></tr>'; }).join("");
   document.getElementById("modal-root").innerHTML = '<div class="overlay" data-m="bg"><form class="modal" id="b-form" role="dialog" aria-modal="true" aria-label="Toplu ödeme" novalidate style="max-width:720px"><div class="modal-head"><h2>Toplu ödeme · ' + ids.length + ' personel</h2><button type="button" class="btn ghost" data-m="close" aria-label="Kapat">✕</button></div>' +
-    '<div class="form"><label class="f">Ödeme tarihi<input type="date" id="b-tarih" value="' + today() + '"></label><label class="f">Yöntem<select id="b-yontem">' + ["Havale / EFT", "Nakit", "Kredi kartı", "Çek", "Senet", "Mahsup"].map(v => opt(v, v, "Havale / EFT")).join("") + '</select></label>' +
+    '<div class="form"><label class="f">Ödeme tarihi<input type="date" id="b-tarih" value="' + today() + '"></label><label class="f">Yöntem<select id="b-yontem">' + odemeOpts("") + '</select></label>' +
     '<label class="f full">Açıklama (her ödemeye yazılır)<input id="b-acik" value="' + esc(ymLabel(ymShift(ymNow(), -1)) + " hizmet bedeli ödemesi") + '"></label></div>' +
     '<p class="small muted" style="margin:14px 0 6px">Tutarlar personelin güncel borcuyla dolduruldu; değiştirebilirsiniz. Tutarı boş ya da 0 olan personele ödeme kaydedilmez.</p>' +
     '<div class="tw"><table><thead><tr><th>Personel</th><th class="num">Ödenen tutar</th></tr></thead><tbody>' + rows + '</tbody><tfoot><tr><td>Toplam</td><td class="num" id="b-top"></td></tr></tfoot></table></div>' +
@@ -1077,7 +1128,7 @@ function raporCsv() {
     rows.push(["Toplam", r.c.ad, r.c.vkn, "", "", "", r.adet, csvNum(r.net), csvNum(r.kdv), csvNum(r.brut), csvNum(r.kesinti), csvNum(r.odenecek), csvNum(r.odenen), csvNum(r.kalan), ""]);
     r.fs.forEach(f => { const x = calcF(f), o = Math.min(odenenF(f.id), x.net); rows.push(["Fatura", r.c.ad, r.c.vkn, fd(f.tarih), f.no, f.donem, 1, csvNum(x.matrah), csvNum(x.kdv), csvNum(x.brut), csvNum(x.tevkif + x.stopaj), csvNum(x.net), csvNum(o), csvNum(Math.max(0, x.net - o)), { acik: "Açık", kismi: "Kısmi", odendi: g ? "Ödendi" : "Tahsil edildi" }[durumF(f)]]); });
   });
-  saveCsv(rows, "softpeak-rapor-" + S.rTip + (S.rBas ? "-" + S.rBas : "") + (S.rBit ? "-" + S.rBit : "") + ".csv");
+  saveCsv(rows, csvAd("rapor-") + S.rTip + (S.rBas ? "-" + S.rBas : "") + (S.rBit ? "-" + S.rBit : "") + ".csv");
 }
 function saveCsv(rows, name) {
   const blob = new Blob(["﻿" + rows.map(r => r.map(csvCell).join(";")).join("\r\n")], { type: "text/csv;charset=utf-8" });
@@ -1090,7 +1141,7 @@ function agSatirlar() {
   return S.data.cariler.filter(c => c.tip === "personel" && c.durum !== "pasif" && (num(c.aylikSatis) > 0 || num(c.aylikAlis) > 0))
     .sort((a, b) => a.ad.localeCompare(b.ad, "tr"))
     .map(c => {
-      const k = (c.kdvOran ?? 20) / 100, al = r2(num(c.aylikSatis)), ve = r2(num(c.aylikAlis));
+      const k = (c.kdvOran ?? vKdv()) / 100, al = r2(num(c.aylikSatis)), ve = r2(num(c.aylikAlis));
       const alK = r2(al * k), veK = r2(ve * k), kal = r2(al - ve), kalK = r2(veK - alK), ay = r2(kal * agGun());
       return { c, firma: c.musteriId ? cariAd(c.musteriId) : "—", al, alK, ve, veK, kal, kalK, ay, ayK: r2(ay * (1 + k)) };
     });
@@ -1116,7 +1167,7 @@ function agRaporCsv() {
   agSatirlar().forEach(r => { Object.keys(T).forEach(k => T[k] = r2(T[k] + r[k])); rows.push([r.c.ad, r.firma, csvNum(r.al), csvNum(r.alK), csvNum(r.ve), csvNum(r.veK), csvNum(r.kal), csvNum(r.kalK), csvNum(r.ay), csvNum(r.ayK)]); });
   rows.push(["Toplam günlük", "", csvNum(T.al), csvNum(T.alK), csvNum(T.ve), csvNum(T.veK), csvNum(T.kal), csvNum(T.kalK), csvNum(T.ay), csvNum(T.ayK)]);
   rows.push(["Aylık (" + g + " gün)", "", csvNum(T.al * g), csvNum(T.alK * g), csvNum(T.ve * g), csvNum(T.veK * g), csvNum(T.kal * g), csvNum(T.kalK * g), "", ""]);
-  saveCsv(rows, "softpeak-ag-raporu-" + g + "-gun.csv");
+  saveCsv(rows, csvAd("ag-raporu-" + g + "-gun.csv"));
 }
 
 /* ---------- CSV ---------- */
@@ -1127,11 +1178,11 @@ function csv(kind) {
   if (kind === "fatura") {
     rows = [["Tarih", "Tür", "Cari", "VKN/TCKN", "Fatura no", "Dönem", "Personel", "Proje", "Matrah", "KDV %", "KDV", "Tevkifat", "Stopaj", "Net", "PDF", "Açıklama"]];
     filteredFaturalar().slice().reverse().forEach(f => { const c = calcF(f), cr = cari(f.cariId) || {}; rows.push([fd(f.tarih), f.tur === "kesilen" ? "Kesilen" : "Gelen", cr.ad, cr.vkn, f.no, f.donem, f.personelId ? cariAd(f.personelId) : "", f.projeId ? (proje(f.projeId) || {}).ad : "", csvNum(c.matrah), f.kdvOran, csvNum(c.kdv), csvNum(c.tevkif), csvNum(c.stopaj), csvNum(c.net), f.pdf ? "Var" : "", f.aciklama]); });
-    name = "softpeak-faturalar" + (S.fDonem ? "-" + S.fDonem : "") + ".csv";
+    name = csvAd("faturalar") + (S.fDonem ? "-" + S.fDonem : "") + ".csv";
   } else {
     rows = [["Tarih", "Tür", "Cari", "Tutar", "Yöntem", "Proje", "Açıklama"]];
     S.data.hareketler.slice().sort((a, b) => (a.tarih || "").localeCompare(b.tarih || "")).forEach(x => rows.push([fd(x.tarih), x.tur === "tahsilat" ? "Tahsilat" : "Ödeme", cariAd(x.cariId), csvNum(x.tutar), x.yontem, x.projeId ? (proje(x.projeId) || {}).ad : "", x.aciklama]));
-    name = "softpeak-odeme-tahsilat.csv";
+    name = csvAd("odeme-tahsilat.csv");
   }
   const blob = new Blob(["﻿" + rows.map(r => r.map(csvCell).join(";")).join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
@@ -1180,6 +1231,7 @@ document.addEventListener("click", e => {
   else if (a === "csv-fatura") csv("fatura"); else if (a === "csv-hareket") csv("hareket");
   else if (a === "print") window.print();
   else if (a === "csv-rapor") raporCsv();
+  else if (a === "logo-sil") { api("logo_sil", { method: "POST" }).then(j => { ayarUygula(j.ayarlar); toast("Logo kaldırıldı"); }).catch(er => toast(er.message)); }
   else if (a === "csv-agrapor") agRaporCsv();
   else if (a === "acik-doldur") aciklamalariDoldur();
   else if (a === "auto-match") autoMatch(t.dataset.id);
@@ -1208,6 +1260,7 @@ document.addEventListener("click", e => {
 document.addEventListener("submit", async e => {
   e.preventDefault();
   if (e.target.id === "m-form") saveModal();
+  else if (e.target.id === "firma-form") firmaKaydet();
   else if (e.target.id === "b-form") saveBulk();
   else if (e.target.id === "pw-form") {
     try { await api("password", { body: { eski: v("pw-old"), yeni: v("pw-new") } }); e.target.reset(); toast("Şifreniz değiştirildi"); } catch (er) { toast(er.message); }
@@ -1227,7 +1280,7 @@ document.addEventListener("input", e => {
   if (e.target.dataset && e.target.dataset.bId) updBulkTotal();
   if (e.target.dataset && e.target.dataset.dagF && S.modal) { const x = num(e.target.value); if (x > 0) S.modal.dag[e.target.dataset.dagF] = r2(x); else delete S.modal.dag[e.target.dataset.dagF]; S.modal.dagManual = true; updDagSummary(); }
   if (id === "m-tutar" && S.modal && S.modal.kind === "hareket") { if (S.modal.dagManual) updDagSummary(); else updDag(); }
-  if (id === "ag-gun") { S.agGun = e.target.value; try { localStorage.setItem("spcari-ag-gun", e.target.value); } catch (x) {} clearTimeout(qT); qT = setTimeout(render, 150); }
+  if (id === "ag-gun") { S.agGun = e.target.value; try { localStorage.setItem("cari-ag-gun", e.target.value); } catch (x) {} clearTimeout(qT); qT = setTimeout(render, 150); }
   if (id === "r-q") { S.rQ = e.target.value; clearTimeout(qT); qT = setTimeout(render, 150); }
   if (id === "f-q") { S.fQ = e.target.value; clearTimeout(qT); qT = setTimeout(render, 150); }
   if (id === "h-q") { S.hQ = e.target.value; clearTimeout(qT); qT = setTimeout(render, 150); }
@@ -1248,6 +1301,8 @@ document.addEventListener("change", e => {
   if (id === "f-donem") { S.fDonem = e.target.value; render(); }
   if (id === "r-bas") { S.rBas = e.target.value; render(); }
   if (id === "r-bit") { S.rBit = e.target.value; render(); }
+  if (id === "a-logokoyu") document.documentElement.setAttribute("data-logo-koyu", e.target.value);
+  if (id === "a-logo" && e.target.files[0]) { logoYukle(e.target.files[0]); e.target.value = ""; return; }
   if (id === "imp-files") { addImportFiles(e.target.files); e.target.value = ""; return; }
   if (id === "m-pdf" && e.target.files[0]) { pickPdf(e.target.files[0]); return; }
   const row = e.target.closest && e.target.closest("tr[data-row]");
@@ -1277,7 +1332,7 @@ window.addEventListener("beforeunload", e => { if (S.imp.some(r => r.st !== "ok"
 (async () => {
   try {
     const me = await api("me");
-    S.me = me.user; S.csrf = me.csrf; S.softpeakVkn = me.softpeakVkn || ""; S.pdfMaxMb = me.pdfMaxMb || 20; S.canWrite = me.user.rol === "admin";
+    S.me = me.user; S.csrf = me.csrf; S.ay = me.ayarlar || {}; S.firmaVkn = S.ay.firma_vkn || ""; logoKoyuUygula(); if (S.agGun == null || S.agGun === "") S.agGun = S.ay.ag_gun || 20; S.pdfMaxMb = me.pdfMaxMb || 20; S.canWrite = me.user.rol === "admin";
     const all = await api("all");
     COLS.forEach(c => S.data[c] = all.data[c] || []);
     S.data.dagitim = all.data.dagitim || [];

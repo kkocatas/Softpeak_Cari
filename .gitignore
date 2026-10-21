@@ -3,7 +3,7 @@ config.php
 
 # Fatura PDF arşivi ve yedekler — kişisel/ticari veri, depoya girmemeli
 pdf-arsiv/
-softpeak-faturalar/
+cari-belgeler/
 *.sql.gz
 *.zip
 

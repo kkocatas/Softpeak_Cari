@@ -1,6 +1,6 @@
 <?php
 declare(strict_types=1);
-// Softpeak Cari — JSON API. Tüm istekler oturum ister (login hariç); değişiklikler yönetici rolü ister.
+// Cari Takip — JSON API. Tüm istekler oturum ister (login hariç); değişiklikler yönetici rolü ister.
 
 require __DIR__ . '/lib/bootstrap.php';
 security_headers();
@@ -99,7 +99,7 @@ function validate(string $t, array $in): array {
         $empty = $v === null || $v === '';
         if ($empty) {
             if ($req) fail((ETIKET[$k] ?? $k) . ' boş bırakılamaz.');
-            $vals[$col] = match ($type) { 'pct' => ($col === 'kdv_oran' ? 20 : 0), 'money', 'tevkifat' => 0, 'str', 'email', 'phone' => '', 'enum' => $opt[0], default => null };
+            $vals[$col] = match ($type) { 'pct' => ($col === 'kdv_oran' ? (float)(ayar('varsayilan_kdv') ?: 20) : 0), 'money', 'tevkifat' => 0, 'str', 'email', 'phone' => '', 'enum' => $opt[0], default => null };
             continue;
         }
         switch ($type) {
@@ -143,23 +143,6 @@ function check_dup_fatura(array $vals, ?int $id): void {
 }
 
 /* ---------- ödeme dağıtımı ---------- */
-const SCHEMA_VER = 4;
-/** Sonradan eklenen tabloları mevcut kurulumlarda oluşturur (oturum başına bir kez). */
-function ensure_schema(): void {
-    if (($_SESSION['schema'] ?? 0) >= SCHEMA_VER) return;
-    db()->exec("CREATE TABLE IF NOT EXISTS odeme_dagitim (   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,   hareket_id INT UNSIGNED NOT NULL,   fatura_id INT UNSIGNED NOT NULL,   tutar DECIMAL(15,2) NOT NULL,   KEY ix_fatura (fatura_id), KEY ix_hareket (hareket_id),   CONSTRAINT fk_dagitim_hareket FOREIGN KEY (hareket_id) REFERENCES hareketler(id) ON DELETE CASCADE,   CONSTRAINT fk_dagitim_fatura FOREIGN KEY (fatura_id) REFERENCES faturalar(id) ON DELETE CASCADE ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci");
-    // v3: personel kartında KDV oranı
-    $st = db()->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cariler' AND COLUMN_NAME = 'kdv_oran'");
-    $st->execute();
-    if (!(int)$st->fetchColumn()) db()->exec('ALTER TABLE cariler ADD COLUMN kdv_oran DECIMAL(5,2) NOT NULL DEFAULT 20 AFTER aylik_satis');
-    // v4: cari kartlarında e-posta ve telefon
-    foreach (['eposta' => "VARCHAR(150) NOT NULL DEFAULT '' AFTER vkn", 'telefon' => "VARCHAR(30) NOT NULL DEFAULT '' AFTER eposta"] as $kol => $tanim) {
-        $st = db()->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cariler' AND COLUMN_NAME = ?");
-        $st->execute([$kol]);
-        if (!(int)$st->fetchColumn()) db()->exec("ALTER TABLE cariler ADD COLUMN $kol $tanim");
-    }
-    $_SESSION['schema'] = SCHEMA_VER;
-}
 /** Faturanın cariye yansıyan (ödenecek / tahsil edilecek) tutarı — arayüzdeki calcF().net ile aynı formül. */
 function fatura_net(array $f): float {
     $m = (float)$f['matrah']; $k = $m * (float)$f['kdv_oran'] / 100;
@@ -317,6 +300,18 @@ if ($method === 'POST') {
     if ($postMax > 0 && $len > $postMax) fail('Gönderilen dosya sunucunun sınırından büyük (' . ini_get('post_max_size') . ').', 413);
 }
 
+if ($a === 'logo') {
+    // Giriş ekranında da gösterildiği için oturum istemez; yalnızca yüklenen logo görseli döner.
+    try { $l = db()->query("SELECT anahtar, deger FROM ayarlar WHERE anahtar IN ('logo_data','logo_mime')")->fetchAll(PDO::FETCH_KEY_PAIR); } catch (Throwable $t) { $l = []; }
+    $mime = $l['logo_mime'] ?? ''; $bin = isset($l['logo_data']) ? base64_decode($l['logo_data'], true) : false;
+    if (!$bin || !in_array($mime, LOGO_MIME, true)) { http_response_code(404); exit; }
+    header('Content-Type: ' . $mime);
+    header('Content-Length: ' . strlen($bin));
+    header('Cache-Control: public, max-age=31536000, immutable');
+    header("Content-Security-Policy: default-src 'none'");
+    echo $bin; exit;
+}
+
 if ($a === 'login' && $method === 'POST') {
     $ip = client_ip();
     db()->prepare('DELETE FROM giris_denemeleri WHERE zaman < NOW() - INTERVAL 1 DAY')->execute();
@@ -349,7 +344,7 @@ $needAdmin = fn() => $isAdmin ?: fail('Bu işlem için yönetici yetkisi gerekiy
 try {
 switch ($a) {
     case 'me':
-        out(['ok' => true, 'user' => $user, 'csrf' => $_SESSION['csrf'], 'softpeakVkn' => (string)cfg('softpeak_vkn', ''), 'pdfMaxMb' => min((int)cfg('pdf_max_mb', 20), (int)(ini_bytes(ini_get('upload_max_filesize') ?: '2M') / 1048576) ?: 20)]);
+        out(['ok' => true, 'user' => $user, 'csrf' => $_SESSION['csrf'], 'ayarlar' => ayarlar_genel(), 'pdfMaxMb' => min((int)cfg('pdf_max_mb', 20), (int)(ini_bytes(ini_get('upload_max_filesize') ?: '2M') / 1048576) ?: 20)]);
 
     case 'logout':
         $_SESSION = []; session_destroy(); out(['ok' => true]);
@@ -451,6 +446,54 @@ switch ($a) {
         readfile($p);
         exit;
 
+    case 'ayar_kaydet':
+        $needAdmin();
+        $b = body(); $yeni = [];
+        if (array_key_exists('firma_ad', $b)) $yeni['firma_ad'] = mb_substr(trim((string)$b['firma_ad']), 0, 150);
+        if (array_key_exists('firma_vkn', $b)) { $v = preg_replace('/\D/', '', (string)$b['firma_vkn']); if ($v !== '' && !preg_match('/^\d{10,11}$/', $v)) fail('VKN 10, TCKN 11 haneli olmalı.'); $yeni['firma_vkn'] = $v; }
+        if (array_key_exists('uygulama_ad', $b)) { $v = mb_substr(trim((string)$b['uygulama_ad']), 0, 60); $yeni['uygulama_ad'] = $v !== '' ? $v : AYAR_VARSAYILAN['uygulama_ad']; }
+        if (array_key_exists('kdv_oranlari', $b)) {
+            $list = [];
+            foreach (preg_split('/[;,\s]+/', (string)$b['kdv_oranlari'], -1, PREG_SPLIT_NO_EMPTY) as $x) { $x = str_replace(',', '.', $x); if (!is_numeric($x) || $x < 0 || $x > 100) fail('KDV oranları 0 ile 100 arasında sayılar olmalı (ör. 20, 10, 1, 0).'); $list[] = rtrim(rtrim(number_format((float)$x, 2, '.', ''), '0'), '.'); }
+            $list = array_values(array_unique($list)); if (!$list) fail('En az bir KDV oranı girin.');
+            $yeni['kdv_oranlari'] = implode(',', $list);
+        }
+        if (array_key_exists('varsayilan_kdv', $b)) {
+            $v = rtrim(rtrim(number_format((float)str_replace(',', '.', (string)$b['varsayilan_kdv']), 2, '.', ''), '0'), '.');
+            $liste = explode(',', $yeni['kdv_oranlari'] ?? ayar('kdv_oranlari'));
+            if (!in_array($v, $liste, true)) fail('Varsayılan KDV oranı, KDV oranları listesinde olmalı.');
+            $yeni['varsayilan_kdv'] = $v;
+        }
+        if (array_key_exists('odeme_yontemleri', $b)) {
+            $l = array_values(array_unique(array_filter(array_map(fn($x) => mb_substr(trim($x), 0, 40), preg_split('/\r?\n/', (string)$b['odeme_yontemleri'])))));
+            if (!$l) fail('En az bir ödeme yöntemi girin.'); if (count($l) > 20) fail('En fazla 20 ödeme yöntemi girilebilir.');
+            $yeni['odeme_yontemleri'] = implode("\n", $l);
+        }
+        if (array_key_exists('logo_koyu', $b)) { $v = (string)$b['logo_koyu']; if (!in_array($v, ['normal', 'beyaz', 'ters'], true)) fail('Geçersiz logo görünümü.'); $yeni['logo_koyu'] = $v; }
+        if (array_key_exists('ag_gun', $b)) { $v = (int)$b['ag_gun']; if ($v < 0 || $v > 31) fail('Gün sayısı 0 ile 31 arasında olmalı.'); $yeni['ag_gun'] = (string)$v; }
+        foreach ($yeni as $k => $v) ayar_yaz($k, $v);
+        audit('ayarlar', null, 'guncelle', null, $yeni);
+        out(['ok' => true, 'ayarlar' => ayarlar_genel(true)]);
+
+    case 'logo_yukle':
+        $needAdmin();
+        $f = $_FILES['logo'] ?? [];
+        if ($err = upload_error($f)) fail(str_replace('PDF dosyası', 'Logo dosyası', $err));
+        if (!is_uploaded_file($f['tmp_name'])) fail('Dosya yüklenemedi.');
+        if ($f['size'] > 1048576) fail('Logo en fazla 1 MB olabilir.');
+        $info = @getimagesize($f['tmp_name']);
+        if (!$info || !in_array($info['mime'], LOGO_MIME, true)) fail('Logo PNG, JPG, WEBP veya GIF olmalı.');
+        $bin = (string)file_get_contents($f['tmp_name']);
+        ayar_yaz('logo_data', base64_encode($bin)); ayar_yaz('logo_mime', $info['mime']); ayar_yaz('logo_surum', substr(md5($bin), 0, 10));
+        audit('ayarlar', null, 'logo', null, ['mime' => $info['mime'], 'boyut' => strlen($bin)]);
+        out(['ok' => true, 'ayarlar' => ayarlar_genel(true)]);
+
+    case 'logo_sil':
+        $needAdmin();
+        db()->prepare("DELETE FROM ayarlar WHERE anahtar IN ('logo_data','logo_mime','logo_surum')")->execute();
+        audit('ayarlar', null, 'logo_sil', null, null);
+        out(['ok' => true, 'ayarlar' => ayarlar_genel(true)]);
+
     case 'users':
         $needAdmin();
         out(['ok' => true, 'users' => db()->query('SELECT id, kullanici, ad, rol, son_giris FROM kullanicilar ORDER BY id')->fetchAll()]);
@@ -502,6 +545,6 @@ switch ($a) {
         fail('Bilinmeyen istek.', 404);
 }
 } catch (PDOException $ex) {
-    error_log('Softpeak Cari: ' . $ex->getMessage());
+    error_log('Cari Takip: ' . $ex->getMessage());
     fail('Veritabanı hatası. Tekrar deneyin; sürerse hosting hata kaydına bakın.', 500);
 }
