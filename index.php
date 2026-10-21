@@ -7,7 +7,7 @@ header('Cache-Control: no-store');
 $user = null;
 try { $user = current_user(); }
 catch (Throwable $t) { http_response_code(500); exit('Veritabanına bağlanılamadı. config.php ayarlarını kontrol edin veya setup.php ile kurulumu tamamlayın.'); }
-$v = '14';
+$v = '15';
 ?><!doctype html>
 <html lang="tr">
 <head>

@@ -40,7 +40,8 @@ function calcF(f) {
   return { matrah: r2(m), kdv: r2(k), tevkif: r2(t), stopaj: r2(s), net: r2(m + k - t - s), brut: r2(m + k) };
 }
 function pdfUrl(id, indir) { return "api.php?a=pdf&id=" + encodeURIComponent(id) + (indir ? "&indir=1" : ""); }
-function pdfLink(f) { return f.pdf ? '<a class="pdf-link" href="' + pdfUrl(f.id) + '" target="_blank" rel="noopener" data-stop="1" title="' + esc(f.pdfAd || "PDF") + '">PDF</a>' : ""; }
+function belgeEtiket(f) { return f.belgeTur && f.belgeTur !== "pdf" ? "e-Fatura" : "PDF"; }
+function pdfLink(f) { return f.pdf ? '<a class="pdf-link" href="' + pdfUrl(f.id) + '" target="_blank" rel="noopener" data-stop="1" title="' + esc(f.pdfAd || "Fatura") + '">' + belgeEtiket(f) + "</a>" : ""; }
 
 /* Ekstre kuralı: kesilen fatura ve ödeme = Borç; gelen fatura ve tahsilat = Alacak.
    Bakiye > 0 (B): karşı taraf bize borçlu. Bakiye < 0 (A): Softpeak borçlu. */
@@ -141,8 +142,10 @@ async function aciklamalariDoldur() {
   let n = 0, bos = 0;
   for (const f of list) {
     try {
-      const r = await fetch(pdfUrl(f.id), { credentials: "same-origin" }); if (!r.ok) throw new Error("PDF açılamadı");
-      const ac = kalemler(await pdfText(await r.blob()));
+      const isPdf = !f.belgeTur || f.belgeTur === "pdf";
+      const r = await fetch(pdfUrl(f.id, !isPdf), { credentials: "same-origin" }); if (!r.ok) throw new Error("Belge açılamadı");
+      const blob = await r.blob();
+      const ac = isPdf ? kalemler(await pdfText(blob)) : (await faturaDosyalari(new File([blob], "fatura." + f.belgeTur, { type: f.belgeTur === "zip" ? "application/zip" : "application/xml" })))[0].ubl.aciklama;
       if (!ac) { bos++; continue; }
       const j = await api("save", { q: "&t=faturalar", body: Object.assign({}, f, { aciklama: ac }) }); upsert("faturalar", j.rec); n++;
     } catch (e) { bos++; }
@@ -394,7 +397,7 @@ function vHareket() {
 /* ---------- PDF arşiv yükleme ---------- */
 function vArsiv() {
   let h = '<div class="top"><div><h1>PDF arşiv yükle</h1><div class="sub">Geçmiş faturaları toplu yükleyin. Fatura no, tarih, VKN ve tutarlar PDF\'in içinden okunur; kaydetmeden önce kontrol edin.</div></div></div>';
-  h += '<label class="drop" id="drop" for="imp-files"><strong>PDF dosyalarını buraya bırakın</strong>ya da tıklayıp seçin · birden çok dosya seçebilirsiniz · dosya başına en fazla ' + S.pdfMaxMb + ' MB<input type="file" id="imp-files" accept="application/pdf,.pdf" multiple hidden></label>';
+  h += '<label class="drop" id="drop" for="imp-files"><strong>Fatura PDF\'lerini veya e-Fatura zip/XML dosyalarını buraya bırakın</strong>ya da tıklayıp seçin · birden çok dosya seçebilirsiniz · dosya başına en fazla ' + S.pdfMaxMb + ' MB<br><span class="small">GİB e-Arşiv / e-Fatura portalından indirdiğiniz zip dosyaları doğrudan okunur; tutarlar ve tarihler XML\'den kesin olarak alınır.</span><input type="file" id="imp-files" accept="application/pdf,.pdf,.zip,application/zip,.xml,text/xml,application/xml" multiple hidden></label>';
   if (!S.softpeakVkn) h += '<p class="small muted">İpucu: config.php içine Softpeak\'in VKN\'sini (softpeak_vkn) yazarsanız, faturanın gelen mi kesilen mi olduğu daha doğru tahmin edilir.</p>';
   if (!S.imp.length) return h;
   const bekleyen = S.imp.filter(r => r.st !== "ok").length;
@@ -429,6 +432,90 @@ function loadPdfJs() {
     document.head.appendChild(s);
   });
   return pdfjsP;
+}
+let jszipP = null;
+function loadJSZip() {
+  if (jszipP) return jszipP;
+  jszipP = new Promise((res, rej) => { const s = document.createElement("script"); s.src = "assets/vendor/jszip.min.js"; s.onload = () => res(window.JSZip); s.onerror = () => { jszipP = null; rej(new Error("Zip okuyucu yüklenemedi")); }; document.head.appendChild(s); });
+  return jszipP;
+}
+const UBL_NS = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2";
+function isPdfFile(f) { return /\.pdf$/i.test(f.name) || f.type === "application/pdf"; }
+function isZipFile(f) { return /\.zip$/i.test(f.name) || /zip/.test(f.type); }
+function isXmlFile(f) { return /\.xml$/i.test(f.name) || /xml/.test(f.type); }
+const BIRIM = { DAY: "gün", MON: "ay", HUR: "saat", ANN: "yıl", WEE: "hafta", C62: "adet", NIU: "adet", MIN: "dakika" };
+/** GİB e-Fatura / e-Arşiv UBL XML'inden fatura alanlarını okur. */
+function parseUBL(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length || !doc.documentElement || doc.documentElement.localName !== "Invoice") throw new Error("Geçerli bir e-Fatura XML'i değil");
+  const kids = (el, name) => el ? Array.from(el.children).filter(c => c.localName === name) : [];
+  const kid = (el, name) => kids(el, name)[0] || null;
+  const path = (el, ...names) => { for (const n of names) { el = kid(el, n); if (!el) return null; } return el; };
+  const txt = el => el ? (el.textContent || "").trim() : "";
+  const R = doc.documentElement;
+  const party = side => {
+    const p = path(R, side, "Party"); if (!p) return { id: "", ad: "" };
+    const ids = kids(p, "PartyIdentification").map(pi => kid(pi, "ID")).filter(Boolean);
+    const idEl = ids.find(i => /^(VKN|TCKN)$/i.test(i.getAttribute("schemeID") || "")) || null;
+    const per = kid(p, "Person");
+    const ad = txt(path(p, "PartyName", "Name")) || (per ? [txt(kid(per, "FirstName")), txt(kid(per, "MiddleName")), txt(kid(per, "FamilyName"))].filter(Boolean).join(" ") : "");
+    return { id: txt(idEl).replace(/\D/g, ""), ad };
+  };
+  const sat = party("AccountingSupplierParty"), al = party("AccountingCustomerParty");
+  const r = { no: txt(kid(R, "ID")), uuid: txt(kid(R, "UUID")), tarih: txt(kid(R, "IssueDate")).slice(0, 10), saticiVkn: sat.id, aliciVkn: al.id, saticiAd: sat.ad, aliciAd: al.ad };
+  r.donem = r.tarih.slice(0, 7);
+  r.vkns = [sat.id, al.id].filter(Boolean);
+  const lm = kid(R, "LegalMonetaryTotal");
+  r.matrah = num(txt(kid(lm, "TaxExclusiveAmount")) || txt(kid(lm, "LineExtensionAmount")));
+  r.odenecek = num(txt(kid(lm, "PayableAmount")));
+  kids(R, "TaxTotal").forEach(tt => kids(tt, "TaxSubtotal").forEach(st => {
+    const kod = txt(path(st, "TaxCategory", "TaxScheme", "TaxTypeCode")), yuzde = num(txt(kid(st, "Percent")));
+    if (kod === "0015" && r.kdvOran == null) r.kdvOran = yuzde;
+    if (kod === "0003" && yuzde) r.stopajOran = yuzde;
+  }));
+  if (r.kdvOran == null) r.kdvOran = 20;
+  kids(R, "WithholdingTaxTotal").forEach(tt => kids(tt, "TaxSubtotal").forEach(st => { const y = num(txt(kid(st, "Percent"))); if (y) r.tevkifat = Math.round(y / 10); }));
+  const satirlar = kids(R, "InvoiceLine").map(l => {
+    const q = kid(l, "InvoicedQuantity"), it = kid(l, "Item");
+    const ad = [txt(kid(it, "Name")), txt(kid(it, "Description"))].filter(Boolean).join(" ").replace(/\s+/g, " ");
+    const mik = num(txt(q)), birim = BIRIM[(q && q.getAttribute("unitCode")) || ""] || "", fiyat = num(txt(path(l, "Price", "PriceAmount"))), tutar = num(txt(kid(l, "LineExtensionAmount")));
+    return ad + " · " + (mik ? nf.format(mik).replace(/,00$/, "") + (birim ? " " + birim : "") + " × " + nf.format(fiyat) + " = " : "") + nf.format(tutar) + " TL";
+  });
+  const notlar = kids(R, "Note").map(txt).filter(n => n && !/^Yaln[ıi]z/i.test(n) && !/^TR\d{2}[\d ]{10,}$/.test(n));
+  r.aciklama = satirlar.concat(notlar.length ? ["Not: " + notlar.join(" · ")] : []).join(" | ").slice(0, 500);
+  r.ozet = ["Fatura no: " + r.no, "ETTN: " + r.uuid, "Tarih: " + r.tarih, "Satıcı: " + sat.ad + " (" + sat.id + ")", "Alıcı: " + al.ad + " (" + al.id + ")", "Matrah: " + nf.format(r.matrah), "KDV: %" + r.kdvOran + (r.tevkifat ? " · tevkifat " + r.tevkifat + "/10" : "") + (r.stopajOran ? " · stopaj %" + r.stopajOran : ""), "Ödenecek: " + nf.format(r.odenecek), "", "Kalemler / notlar:", ...r.aciklama.split(" | ")].join("\n");
+  return r;
+}
+/**
+ * Bir dosyadan okunacak faturaları çıkarır: PDF → 1 kayıt (metin okunur), XML → 1 kayıt,
+ * ZIP → içindeki her e-Fatura XML'i için 1 kayıt. Zip'te tek fatura varsa orijinal zip saklanır;
+ * birden çok fatura varsa her biri için XML + aynı adlı HTML'den yeni bir zip hazırlanır.
+ */
+async function faturaDosyalari(file) {
+  if (isPdfFile(file)) return [{ kind: "pdf", file }];
+  if (isXmlFile(file)) { const t = await file.text(); if (!t.includes(UBL_NS)) throw new Error("e-Fatura XML'i değil"); return [{ kind: "ubl", file, ubl: parseUBL(t) }]; }
+  if (isZipFile(file)) {
+    const JSZip = await loadJSZip(); const z = await JSZip.loadAsync(file);
+    const xmls = Object.values(z.files).filter(e => !e.dir && /\.xml$/i.test(e.name));
+    const out = [];
+    for (const e of xmls) {
+      const t = await e.async("string"); if (!t.includes(UBL_NS)) continue;
+      out.push({ entry: e, ubl: parseUBL(t), xml: t });
+    }
+    if (!out.length) throw new Error("Zip içinde e-Fatura XML'i yok");
+    if (out.length === 1) return [{ kind: "ubl", file, ubl: out[0].ubl }];
+    const res = [];
+    for (const o of out) {
+      const base = o.entry.name.replace(/\.xml$/i, ""), nz = new JSZip();
+      nz.file(o.entry.name.split("/").pop(), o.xml);
+      const html = z.file(base + ".html") || z.file(base + ".htm");
+      if (html) nz.file(html.name.split("/").pop(), await html.async("string"));
+      const blob = await nz.generateAsync({ type: "blob", compression: "DEFLATE" });
+      res.push({ kind: "ubl", file: new File([blob], (o.ubl.no || base.split("/").pop()) + ".zip", { type: "application/zip" }), ubl: o.ubl });
+    }
+    return res;
+  }
+  throw new Error("Desteklenmeyen dosya");
 }
 async function pdfText(file) {
   const lib = await loadPdfJs();
@@ -531,25 +618,40 @@ function matchRow(r) {
 }
 async function addImportFiles(files) {
   const max = S.pdfMaxMb * 1048576;
-  const list = Array.from(files).filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
-  if (!list.length) { toast("Yalnızca PDF dosyaları yüklenebilir."); return; }
-  const start = S.imp.length;
-  list.forEach(f => S.imp.push({ file: f, st: f.size > max ? "err" : "read", err: f.size > max ? "Dosya " + S.pdfMaxMb + " MB'tan büyük" : "", tur: "gelen", cariId: "", no: "", tarih: "", donem: "", matrah: 0, kdvOran: 20, tevkifat: 0 }));
-  render();
-  for (let i = start; i < S.imp.length; i++) {
-    const r = S.imp[i]; if (r.st !== "read") continue;
-    try {
-      const txt = await pdfText(r.file); r.text = txt; r.aciklama = kalemler(txt);
-      const p = parseFatura(txt);
-      Object.assign(r, { no: p.no || "", tarih: p.tarih || "", donem: p.donem || (p.tarih ? p.tarih.slice(0, 7) : ""), matrah: r2(p.matrah || 0), kdvOran: p.kdvOran ?? 20, tevkifat: p.tevkifat || 0, odenecek: p.odenecek || 0, vkns: p.vkns, aliciVkn: p.aliciVkn });
-      matchRow(r);
-      const eksik = [!r.cariId && "cari", !r.no && "fatura no", !r.tarih && "tarih", !r.matrah && "matrah"].filter(Boolean);
-      if (!txt.replace(/\s/g, "").length) r.noText = true;
-      r.st = "ready"; r.note = eksik.length ? "Eksik: " + eksik.join(", ") : "Kontrol edin";
-      if (r.no && r.cariId && S.data.faturalar.some(f => f.no === r.no && f.cariId === r.cariId)) { r.st = "err"; r.err = "Bu fatura zaten kayıtlı"; }
-    } catch (e) { r.st = "ready"; r.note = "PDF metni okunamadı; bilgileri elle girin"; r.text = "Hata: " + (e && e.message || e); }
-    if (r.noText) r.note = "PDF'te metin yok (taranmış belge); bilgileri elle girin";
-    if (S.view === "arsiv") render();
+  const list = Array.from(files).filter(f => isPdfFile(f) || isZipFile(f) || isXmlFile(f));
+  if (!list.length) { toast("PDF, e-Fatura zip veya XML dosyası seçin."); return; }
+  if (list.length < files.length) toast((files.length - list.length) + " dosya atlandı (yalnızca PDF, zip, XML).");
+  const bos = () => ({ st: "read", err: "", tur: "gelen", cariId: "", no: "", tarih: "", donem: "", matrah: 0, kdvOran: 20, tevkifat: 0 });
+  for (const f of list) {
+    if (f.size > max) { S.imp.push(Object.assign(bos(), { file: f, st: "err", err: "Dosya " + S.pdfMaxMb + " MB'tan büyük" })); render(); continue; }
+    let parcalar;
+    try { parcalar = await faturaDosyalari(f); }
+    catch (e) { S.imp.push(Object.assign(bos(), { file: f, st: "err", err: e.message || "Dosya okunamadı" })); render(); continue; }
+    for (const pc of parcalar) {
+      const r = Object.assign(bos(), { file: pc.file });
+      S.imp.push(r); render();
+      try {
+        if (pc.kind === "ubl") {
+          const u = pc.ubl; r.kaynak = "xml"; r.text = u.ozet; r.aciklama = u.aciklama;
+          Object.assign(r, { no: u.no, tarih: u.tarih, donem: u.donem, matrah: r2(u.matrah), kdvOran: u.kdvOran, tevkifat: u.tevkifat || 0, stopajOran: u.stopajOran || 0, odenecek: u.odenecek, vkns: u.vkns, aliciVkn: u.aliciVkn });
+          matchRow(r);
+          const own = (S.softpeakVkn || "").trim();
+          if (!r.cariId) { const karsi = own && u.saticiVkn === own ? { id: u.aliciVkn, ad: u.aliciAd } : { id: u.saticiVkn, ad: u.saticiAd }; r.vknHint = karsi.id; r.adHint = karsi.ad; if (own) r.tur = u.saticiVkn === own ? "kesilen" : "gelen"; }
+        } else {
+          const txt = await pdfText(r.file); r.text = txt; r.aciklama = kalemler(txt);
+          const p = parseFatura(txt);
+          Object.assign(r, { no: p.no || "", tarih: p.tarih || "", donem: p.donem || (p.tarih ? p.tarih.slice(0, 7) : ""), matrah: r2(p.matrah || 0), kdvOran: p.kdvOran ?? 20, tevkifat: p.tevkifat || 0, odenecek: p.odenecek || 0, vkns: p.vkns, aliciVkn: p.aliciVkn });
+          matchRow(r);
+          if (!txt.replace(/\s/g, "").length) r.noText = true;
+        }
+        const eksik = [!r.cariId && "cari", !r.no && "fatura no", !r.tarih && "tarih", !r.matrah && "matrah"].filter(Boolean);
+        r.st = "ready"; r.note = eksik.length ? "Eksik: " + eksik.join(", ") : (r.kaynak === "xml" ? "e-Fatura XML'inden okundu" : "Kontrol edin");
+        if (r.no && r.cariId && S.data.faturalar.some(f2 => f2.no === r.no && f2.cariId === r.cariId)) { r.st = "err"; r.err = "Bu fatura zaten kayıtlı"; }
+        if (r.no && S.imp.some(o => o !== r && o.no === r.no && o.vknHint === r.vknHint && o.cariId === r.cariId)) { r.st = "err"; r.err = "Listede iki kez var"; }
+      } catch (e) { r.st = "ready"; r.note = "Dosya okunamadı; bilgileri elle girin"; r.text = "Hata: " + (e && e.message || e); }
+      if (r.noText) r.note = "PDF'te metin yok (taranmış belge); bilgileri elle girin";
+      if (S.view === "arsiv") render();
+    }
   }
 }
 async function saveImports() {
@@ -562,7 +664,7 @@ async function saveImports() {
     r.st = "busy"; render();
     const fd_ = new FormData();
     fd_.append("pdf", r.file, r.file.name);
-    fd_.append("data", JSON.stringify({ tur: r.tur, cariId: r.cariId, no: r.no, tarih: r.tarih, donem: r.donem || r.tarih.slice(0, 7), matrah: r2(num(r.matrah)), kdvOran: +r.kdvOran, tevkifat: +r.tevkifat, stopajOran: 0, aciklama: r.aciklama || "" }));
+    fd_.append("data", JSON.stringify({ tur: r.tur, cariId: r.cariId, no: r.no, tarih: r.tarih, donem: r.donem || r.tarih.slice(0, 7), matrah: r2(num(r.matrah)), kdvOran: +r.kdvOran, tevkifat: +r.tevkifat, stopajOran: +r.stopajOran || 0, aciklama: r.aciklama || "" }));
     try { const j = await api("import", { form: fd_ }); upsert("faturalar", j.rec); r.st = "ok"; ok++; }
     catch (e) { r.st = "err"; r.err = e.message; bad++; }
   }
@@ -628,7 +730,7 @@ function renderModal() {
   if (M.kind === "cari") {
     const tip = r.tip || p.tip || "personel"; title = (M.rec ? (S.canWrite ? "Düzenle: " : "") : "Yeni ") + (tip === "personel" ? "personel" : "müşteri");
     body = '<input type="hidden" id="m-tip" value="' + tip + '"><div class="form">' +
-      '<label class="f full">' + (tip === "personel" ? "Ad soyad / unvan" : "Firma unvanı") + '<input id="m-ad" required value="' + esc(r.ad) + '"' + RO() + "></label>" +
+      '<label class="f full">' + (tip === "personel" ? "Ad soyad / unvan" : "Firma unvanı") + '<input id="m-ad" required value="' + esc(r.ad || p.ad || "") + '"' + RO() + "></label>" +
       '<label class="f">VKN / TCKN<input id="m-vkn" inputmode="numeric" value="' + esc(r.vkn || p.vkn) + '"' + RO() + "></label>" +
       '<label class="f">E-posta<input id="m-eposta" type="email" autocomplete="off" value="' + esc(r.eposta) + '" placeholder="ornek@firma.com"' + RO() + "></label>" +
       '<label class="f">Telefon<input id="m-telefon" type="tel" autocomplete="off" value="' + esc(r.telefon) + '" placeholder="0532 000 00 00"' + RO() + "></label>" +
@@ -647,7 +749,7 @@ function renderModal() {
       '<label class="f full">Notlar<textarea id="m-not"' + RO() + ">" + esc(r.notlar) + "</textarea></label></div>";
   } else if (M.kind === "proje") {
     title = M.rec ? "Proje" : "Yeni proje";
-    body = '<div class="form"><label class="f full">Proje adı<input id="m-ad" required value="' + esc(r.ad) + '"' + RO() + "></label>" +
+    body = '<div class="form"><label class="f full">Proje adı<input id="m-ad" required value="' + esc(r.ad || p.ad || "") + '"' + RO() + "></label>" +
       '<label class="f full">Müşteri<select id="m-musteri"' + RO() + ">" + cariOpts("musteri", r.musteriId || p.musteriId, "— Seçin —") + "</select></label>" +
       '<label class="f">Proje bedeli (KDV hariç)<input id="m-bedel" inputmode="decimal" value="' + (r.bedel ? nf.format(r.bedel) : "") + '" placeholder="0,00"' + RO() + "></label>" +
       '<label class="f">Durum<select id="m-durum"' + RO() + ">" + opt("devam", "Devam ediyor", r.durum || "devam") + opt("teklif", "Teklif", r.durum) + opt("tamam", "Tamamlandı", r.durum) + opt("iptal", "İptal", r.durum) + "</select></label>" +
@@ -659,10 +761,10 @@ function renderModal() {
     title = M.rec ? "Fatura" + (r.no ? " · " + r.no : "") : "Yeni fatura";
     let pdfBox;
     if (M.file) pdfBox = '<div class="pdfbox"><span class="name">' + esc(M.file.name) + ' <span class="muted small">' + kb(M.file.size) + ' · kaydedince yüklenecek</span></span><button type="button" class="btn ghost" data-m="pdf-unpick">Vazgeç</button></div>';
-    else if (r.pdf) pdfBox = '<div class="pdfbox"><span class="name">' + esc(r.pdfAd || "Fatura PDF") + ' <span class="muted small">' + (r.pdfBoyut ? kb(r.pdfBoyut) : "") + '</span></span><a class="btn" href="' + pdfUrl(r.id) + '" target="_blank" rel="noopener">Aç / yazdır</a><a class="btn" href="' + pdfUrl(r.id, 1) + '">İndir</a>' + (S.canWrite ? '<label class="btn" for="m-pdf">Değiştir</label><button type="button" class="btn danger" data-m="pdf-del">Kaldır</button>' : "") + "</div>";
-    else pdfBox = S.canWrite ? '<label class="pdfbox" for="m-pdf" style="cursor:pointer"><span class="name">Fatura PDF\'i ekleyin</span><span class="btn">PDF seç</span></label>' : '<div class="pdfbox muted">Bu faturaya PDF eklenmemiş.</div>';
+    else if (r.pdf) pdfBox = '<div class="pdfbox"><span class="name">' + esc(r.pdfAd || "Fatura belgesi") + ' <span class="muted small">' + belgeEtiket(r) + (r.pdfBoyut ? " · " + kb(r.pdfBoyut) : "") + '</span></span><a class="btn" href="' + pdfUrl(r.id) + '" target="_blank" rel="noopener">Aç / yazdır</a><a class="btn" href="' + pdfUrl(r.id, 1) + '">İndir</a>' + (S.canWrite ? '<label class="btn" for="m-pdf">Değiştir</label><button type="button" class="btn danger" data-m="pdf-del">Kaldır</button>' : "") + "</div>";
+    else pdfBox = S.canWrite ? '<label class="pdfbox" for="m-pdf" style="cursor:pointer"><span class="name">Fatura belgesi ekleyin <span class="muted small">PDF veya e-Fatura zip/XML</span></span><span class="btn">Dosya seç</span></label>' : '<div class="pdfbox muted">Bu faturaya belge eklenmemiş.</div>';
     body = '<div class="form">' + (S.canWrite ? '<div class="full"><div class="seg" role="group" aria-label="Fatura türü"><button type="button" data-mtur="gelen" aria-pressed="' + (tur === "gelen") + '">Gelen fatura · personelden</button><button type="button" data-mtur="kesilen" aria-pressed="' + (tur === "kesilen") + '">Kesilen fatura · müşteriye</button></div></div>' : '<div class="full"><span class="chip ' + (tur === "kesilen" ? "out" : "in") + '">' + (tur === "kesilen" ? "Kesilen fatura" : "Gelen fatura") + "</span></div>") +
-      '<input type="hidden" id="m-tur" value="' + tur + '">' + pdfBox + '<input type="file" id="m-pdf" accept="application/pdf,.pdf" hidden>' +
+      '<input type="hidden" id="m-tur" value="' + tur + '">' + pdfBox + '<input type="file" id="m-pdf" accept="application/pdf,.pdf,.zip,application/zip,.xml,text/xml,application/xml" hidden>' +
       '<label class="f full">' + (tur === "gelen" ? "Faturayı kesen (personel / tedarikçi)" : "Fatura kesilen müşteri") + '<select id="m-cari" required' + RO() + ">" + cariOpts(tur === "gelen" ? "personel" : "musteri", cariId, "— Seçin —") + "</select></label>" +
       (tur === "kesilen" ? '<label class="f">Hizmeti veren personel<select id="m-personel"' + RO() + ">" + cariOpts("personel", r.personelId || p.personelId, "— Proje / diğer —") + "</select></label>" : "") +
       '<label class="f' + (tur === "kesilen" ? "" : " full") + '">Proje<select id="m-proje"' + RO() + ">" + projeOpts(r.projeId || p.projeId, tur === "kesilen" ? cariId : null) + "</select></label>" +
@@ -779,23 +881,30 @@ async function pdfDelete() {
 }
 async function pickPdf(file) {
   const M = S.modal; if (!M) return;
-  if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") return fail("Yalnızca PDF dosyası seçin.");
-  if (file.size > S.pdfMaxMb * 1048576) return fail("PDF " + S.pdfMaxMb + " MB'tan büyük olamaz.");
+  if (!isPdfFile(file) && !isZipFile(file) && !isXmlFile(file)) return fail("PDF, e-Fatura zip veya XML dosyası seçin.");
+  if (file.size > S.pdfMaxMb * 1048576) return fail("Dosya " + S.pdfMaxMb + " MB'tan büyük olamaz.");
+  let p = null, ac = "";
+  if (!isPdfFile(file)) {
+    try { const ps = await faturaDosyalari(file); if (ps.length > 1) return fail("Bu zip'te " + ps.length + " fatura var; toplu yükleme için PDF arşiv yükle ekranını kullanın."); p = ps[0].ubl; ac = p.aciklama; }
+    catch (e) { return fail(e.message || "Dosya okunamadı."); }
+  }
   rerenderModal(M => { M.file = file; M.err = ""; });
-  // Yeni faturada boş alanları PDF'ten doldur
+  // Yeni faturada boş alanları belgeden doldur
   if (M.rec) return;
   try {
-    const txt = await pdfText(file); const p = parseFatura(txt); if (S.modal !== M) return;
+    if (!p) { const txt = await pdfText(file); p = parseFatura(txt); ac = kalemler(txt); }
+    if (S.modal !== M) return;
     const set = (id, val) => { const e = document.getElementById(id); if (e && val && !e.value) { e.value = val; return true; } return false; };
     set("m-no", p.no);
-    if (set("m-acik", kalemler(txt))) personelAciklamadan();
+    if (set("m-acik", ac)) personelAciklamadan();
     if (p.tarih) { const t = document.getElementById("m-tarih"); if (t && t.value === today()) t.value = p.tarih; }
     if (p.donem || p.tarih) { const d = document.getElementById("m-donem"); if (d) d.value = p.donem || p.tarih.slice(0, 7); }
     if (p.matrah) set("m-matrah", nf.format(p.matrah));
     if (p.kdvOran != null) { const k = document.getElementById("m-kdv"); if (k && [...k.options].some(o => +o.value === p.kdvOran)) k.value = p.kdvOran; }
     if (p.tevkifat) document.getElementById("m-tev").value = p.tevkifat;
+    if (p.stopajOran) { const st = document.getElementById("m-stop"); if (st && [...st.options].some(o => +o.value === p.stopajOran)) st.value = p.stopajOran; }
     if (!v("m-cari")) { const r = { vkns: p.vkns, aliciVkn: p.aliciVkn }; matchRow(r); if (r.cariId && r.tur === v("m-tur")) { document.getElementById("m-cari").value = r.cariId; updHint(); } }
-    updCalc(); toast("PDF'teki bilgiler boş alanlara yazıldı; kontrol edin");
+    updCalc(); toast("Belgedeki bilgiler boş alanlara yazıldı; kontrol edin");
   } catch (e) { /* metin okunamazsa alanlar elle doldurulur */ }
 }
 function userModal(u) {
@@ -1085,7 +1194,7 @@ document.addEventListener("click", e => {
   else if (a === "imp-clear") { if (!S.impBusy) { S.imp = []; render(); } }
   else if (a === "imp-clear-ok") { S.imp = S.imp.filter(r => r.st !== "ok"); render(); }
   else if (a === "imp-del") { S.imp.splice(+t.dataset.row, 1); render(); }
-  else if (a === "imp-new-cari") { const r = S.imp[+t.dataset.row]; openModal("cari", null, { tip: r.tur === "gelen" ? "personel" : "musteri", vkn: r.vknHint }); }
+  else if (a === "imp-new-cari") { const r = S.imp[+t.dataset.row]; openModal("cari", null, { tip: r.tur === "gelen" ? "personel" : "musteri", vkn: r.vknHint, ad: r.adHint ? r.adHint.toLocaleLowerCase("tr").replace(/(^|\s)\S/g, x => x.toLocaleUpperCase("tr")) : "" }); }
   const m = t.dataset.m;
   if (m === "close" || (m === "bg" && e.target === t)) closeModal();
   else if (m === "del") rerenderModal(M => { M.confirmDel = true; });

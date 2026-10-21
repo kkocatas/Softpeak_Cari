@@ -85,7 +85,7 @@ function to_api(string $t, array $row): array {
             default => $v ?? '',
         };
     }
-    if ($t === 'faturalar') { $o['pdfAd'] = $row['pdf_ad'] ?? ''; $o['pdfBoyut'] = (int)($row['pdf_boyut'] ?? 0); $o['pdf'] = !empty($row['pdf_yol']); }
+    if ($t === 'faturalar') { $o['pdfAd'] = $row['pdf_ad'] ?? ''; $o['pdfBoyut'] = (int)($row['pdf_boyut'] ?? 0); $o['pdf'] = !empty($row['pdf_yol']); $o['belgeTur'] = $o['pdf'] ? strtolower(pathinfo((string)$row['pdf_yol'], PATHINFO_EXTENSION)) : ''; }
     $o['guncelleme'] = $row['guncelleme'] ?? '';
     return $o;
 }
@@ -249,20 +249,41 @@ function upload_error(array $f): ?string {
         default => 'Dosya yüklenemedi (hata kodu ' . $f['error'] . '). Tekrar deneyin.',
     };
 }
+const UBL_NS = 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2';
+/** Yüklenen fatura belgesinin türü: pdf, zip (GİB e-Fatura/e-Arşiv indirmesi) veya xml (UBL). Geçersizse hata. */
+function belge_turu(string $tmp, string $ad): string {
+    $head = (string)file_get_contents($tmp, false, null, 0, 4096);
+    if (str_starts_with($head, '%PDF-')) return 'pdf';
+    if (str_starts_with($head, "PK\x03\x04")) {
+        if (class_exists('ZipArchive')) {
+            $z = new ZipArchive();
+            if ($z->open($tmp) !== true) fail('Zip dosyası açılamadı.');
+            $ok = false;
+            for ($i = 0; $i < $z->numFiles && $i < 200; $i++) {
+                $n = (string)$z->getNameIndex($i);
+                if (preg_match('/\.xml$/i', $n) && str_contains((string)$z->getFromIndex($i, 8192), UBL_NS)) { $ok = true; break; }
+            }
+            $z->close();
+            if (!$ok) fail('Zip içinde e-Fatura XML dosyası bulunamadı.');
+        }
+        return 'zip';
+    }
+    $t = ltrim($head, "\xEF\xBB\xBF \t\r\n");
+    if (str_starts_with($t, '<') && str_contains($head, UBL_NS)) return 'xml';
+    fail('Yalnızca PDF, e-Fatura zip veya e-Fatura XML dosyası yüklenebilir.');
+}
 function store_pdf(int $faturaId, array $f, array $fatura): array {
     if ($err = upload_error($f)) fail($err);
     if (!is_uploaded_file($f['tmp_name'])) fail('Dosya yüklenemedi.');
     $max = (int)cfg('pdf_max_mb', 20) * 1024 * 1024;
-    if ($f['size'] > $max) fail('PDF ' . cfg('pdf_max_mb', 20) . ' MB\'tan büyük olamaz.');
-    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($f['tmp_name']);
-    $head = (string)file_get_contents($f['tmp_name'], false, null, 0, 5);
-    if ($mime !== 'application/pdf' || $head !== '%PDF-') fail('Yalnızca PDF dosyası yüklenebilir.');
+    if ($f['size'] > $max) fail('Dosya ' . cfg('pdf_max_mb', 20) . ' MB\'tan büyük olamaz.');
+    $ext = belge_turu($f['tmp_name'], (string)$f['name']);
     $root = pdf_root();
     $sub = substr($fatura['tarih'], 0, 4) . '/' . substr($fatura['tarih'], 5, 2);
-    if (!is_dir("$root/$sub") && !@mkdir("$root/$sub", 0750, true)) fail('PDF klasörü oluşturulamadı.', 500);
+    if (!is_dir("$root/$sub") && !@mkdir("$root/$sub", 0750, true)) fail('Fatura klasörü oluşturulamadı.', 500);
     $slug = preg_replace('/[^A-Za-z0-9_-]+/', '', (string)$fatura['no']) ?: 'fatura';
-    $rel = "$sub/{$faturaId}_{$fatura['tur']}_{$slug}_" . bin2hex(random_bytes(4)) . '.pdf';
-    if (!move_uploaded_file($f['tmp_name'], "$root/$rel")) fail('PDF kaydedilemedi; klasör yazma iznini kontrol edin.', 500);
+    $rel = "$sub/{$faturaId}_{$fatura['tur']}_{$slug}_" . bin2hex(random_bytes(4)) . '.' . $ext;
+    if (!move_uploaded_file($f['tmp_name'], "$root/$rel")) fail('Dosya kaydedilemedi; klasör yazma iznini kontrol edin.', 500);
     @chmod("$root/$rel", 0640);
     $old = $fatura['pdf_yol'] ?? null;
     $ad = mb_substr(basename((string)$f['name']), 0, 255);
@@ -272,9 +293,16 @@ function store_pdf(int $faturaId, array $f, array $fatura): array {
     return to_api('faturalar', fetch_row('faturalar', $faturaId));
 }
 function safe_pdf_path(string $rel): ?string {
-    if (str_contains($rel, '..') || !preg_match('#^\d{4}/\d{2}/[A-Za-z0-9_-]+\.pdf$#', $rel)) return null;
+    if (str_contains($rel, '..') || !preg_match('#^\d{4}/\d{2}/[A-Za-z0-9_-]+\.(pdf|zip|xml)$#', $rel)) return null;
     $p = pdf_root() . '/' . $rel;
     return is_file($p) ? $p : null;
+}
+/** e-Fatura HTML görünümünü ayrı, yalıtılmış (sandbox) bir sayfa olarak gösterir; uygulamanın oturumuna erişemez. */
+function send_sandboxed_html(string $html): void {
+    header('Content-Type: text/html; charset=utf-8');
+    header("Content-Security-Policy: sandbox allow-scripts allow-modals allow-popups; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:");
+    header('Cache-Control: private, no-store');
+    echo $html;
 }
 function remove_pdf_file(string $rel): void { if ($p = safe_pdf_path($rel)) @unlink($p); }
 
@@ -394,13 +422,31 @@ switch ($a) {
         $id = (int)($_GET['id'] ?? 0);
         $f = fetch_row('faturalar', $id);
         $p = $f && $f['pdf_yol'] ? safe_pdf_path($f['pdf_yol']) : null;
-        if (!$p) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); exit('PDF bulunamadı.'); }
+        if (!$p) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); exit('Fatura belgesi bulunamadı.'); }
         session_write_close();
-        $name = $f['pdf_ad'] ?: ('fatura-' . $id . '.pdf');
+        $ext = strtolower(pathinfo($p, PATHINFO_EXTENSION));
+        $name = $f['pdf_ad'] ?: ('fatura-' . $id . '.' . $ext);
         $ascii = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name);
-        header('Content-Type: application/pdf');
+        $indir = isset($_GET['indir']);
+        if (!$indir && $ext === 'zip') {
+            if (!class_exists('ZipArchive')) { header('Content-Type: text/plain; charset=utf-8'); exit('Sunucuda PHP zip eklentisi kapalı; e-Faturayı görüntülemek için İndir düğmesini kullanın.'); }
+            $z = new ZipArchive(); $html = null; $xml = null;
+            if ($z->open($p) === true) {
+                for ($i = 0; $i < $z->numFiles && $i < 200; $i++) {
+                    $n = (string)$z->getNameIndex($i);
+                    if ($html === null && preg_match('/\.html?$/i', $n)) $html = (string)$z->getFromIndex($i);
+                    if ($xml === null && preg_match('/\.xml$/i', $n)) $xml = (string)$z->getFromIndex($i);
+                }
+                $z->close();
+            }
+            if ($html !== null) { send_sandboxed_html($html); exit; }
+            if ($xml !== null) { header('Content-Type: text/plain; charset=utf-8'); echo $xml; exit; }
+            header('Content-Type: text/plain; charset=utf-8'); exit('Zip içinde görüntülenecek dosya yok.');
+        }
+        if (!$indir && $ext === 'xml') { header('Content-Type: text/plain; charset=utf-8'); header('Cache-Control: private, no-store'); readfile($p); exit; }
+        header('Content-Type: ' . ($ext === 'pdf' ? 'application/pdf' : ($ext === 'zip' ? 'application/zip' : 'application/xml')));
         header('Content-Length: ' . filesize($p));
-        header('Content-Disposition: ' . (isset($_GET['indir']) ? 'attachment' : 'inline') . '; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+        header('Content-Disposition: ' . ($indir || $ext !== 'pdf' ? 'attachment' : 'inline') . '; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($name));
         header('Cache-Control: private, no-store');
         readfile($p);
         exit;

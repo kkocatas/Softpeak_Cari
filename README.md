@@ -62,6 +62,7 @@ Giriş adresi: `https://softpeak.com.tr/cari/`
 
 - **Yönetici** her şeyi ekler, düzenler, siler. **Salt okunur** kullanıcı (mali müşavir) her ekranı görür, PDF'leri açıp indirir, ekstre yazdırır, CSV alır; hiçbir şeyi değiştiremez.
 - **Fatura PDF'i:** Fatura penceresinde "PDF seç". Yeni faturada PDF seçince fatura no, tarih, matrah, KDV ve VKN'ye göre cari boş alanlara yazılır.
+- **e-Fatura zip / XML:** GİB e-Arşiv / e-Fatura portalından indirilen zip dosyaları (içinde UBL XML + HTML) arşiv ekranına doğrudan sürüklenebilir. Fatura no, tarih, taraflar, matrah, KDV, tevkifat ve kalemler XML'den kesin olarak okunur; zip olduğu gibi saklanır ve uygulamadan resmî görünümüyle açılır. Tek zip'te birden çok fatura varsa her biri ayrı kaydedilir.
 - **Geçmiş faturalar:** "PDF arşiv yükle" ekranına PDF'leri sürükleyin. Her dosyanın bilgileri PDF içinden okunur, VKN'si kayıtlı bir cariyle eşleşirse cari ve fatura türü kendiliğinden seçilir. Satırları kontrol edip "Kaydet"e basın. Aynı cari için aynı fatura numarası ikinci kez kaydedilmez.
   - Okuma GİB e-Fatura / e-Arşiv PDF'lerinde en iyi sonucu verir. Taranmış (resim) PDF'lerde metin olmadığı için bilgileri elle girersiniz; PDF yine eklenir.
   - Önce müşterileri ve personeli VKN'leriyle ekleyin; eşleşme bu sayede çalışır. Eşleşmeyen VKN için satırda "cari olarak ekle" bağlantısı çıkar.
