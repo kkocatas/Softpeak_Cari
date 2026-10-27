@@ -127,7 +127,7 @@ function pdf_root(): string {
 }
 
 /* ---------- veritabanı sürümü (sonradan eklenen tablo/sütunlar) ---------- */
-const SCHEMA_VER = 5;
+const SCHEMA_VER = 6;
 /** Sonradan eklenen tabloları mevcut kurulumlarda oluşturur (oturum başına bir kez). */
 function ensure_schema(): void {
     if (($_SESSION['schema'] ?? 0) >= SCHEMA_VER) return;
@@ -152,6 +152,10 @@ function ensure_schema(): void {
     if (!in_array('logo_data', $var, true) && is_file($eskiLogo) && ($bin = file_get_contents($eskiLogo))) {
         ayar_yaz('logo_data', base64_encode($bin)); ayar_yaz('logo_mime', 'image/png'); ayar_yaz('logo_surum', substr(md5($bin), 0, 10));
     }
+    // v6: cari kartında vade (gün)
+    $st = db()->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cariler' AND COLUMN_NAME = 'vade_gun'");
+    $st->execute();
+    if (!(int)$st->fetchColumn()) db()->exec('ALTER TABLE cariler ADD COLUMN vade_gun SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER kdv_oran');
     $_SESSION['schema'] = SCHEMA_VER;
     unset($GLOBALS['__ayar_cache']);
 }
@@ -167,6 +171,7 @@ const AYAR_VARSAYILAN = [
     'ag_gun' => '20',
     'logo_surum' => '',
     'logo_koyu' => 'normal',
+    'vade_uyari_gun' => '7',
 ];
 const LOGO_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 function ayarlar(): array {

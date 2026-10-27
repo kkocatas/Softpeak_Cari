@@ -35,6 +35,7 @@ const ENT = [
         'aylikAlis' => ['aylik_alis', 'money'],
         'aylikSatis' => ['aylik_satis', 'money'],
         'kdvOran' => ['kdv_oran', 'pct'],
+        'vadeGun' => ['vade_gun', 'int', [0, 365]],
         'baslangic' => ['baslangic', 'date'],
         'notlar' => ['notlar', 'str', 5000],
     ],
@@ -81,7 +82,7 @@ function to_api(string $t, array $row): array {
         $o[$k] = match ($d[1]) {
             'ref' => $v === null ? '' : (string)$v,
             'money', 'pct' => $v === null ? 0 : (float)$v,
-            'tevkifat' => (int)$v,
+            'tevkifat', 'int' => (int)$v,
             default => $v ?? '',
         };
     }
@@ -99,7 +100,7 @@ function validate(string $t, array $in): array {
         $empty = $v === null || $v === '';
         if ($empty) {
             if ($req) fail((ETIKET[$k] ?? $k) . ' boş bırakılamaz.');
-            $vals[$col] = match ($type) { 'pct' => ($col === 'kdv_oran' ? (float)(ayar('varsayilan_kdv') ?: 20) : 0), 'money', 'tevkifat' => 0, 'str', 'email', 'phone' => '', 'enum' => $opt[0], default => null };
+            $vals[$col] = match ($type) { 'pct' => ($col === 'kdv_oran' ? (float)(ayar('varsayilan_kdv') ?: 20) : 0), 'money', 'tevkifat', 'int' => 0, 'str', 'email', 'phone' => '', 'enum' => $opt[0], default => null };
             continue;
         }
         switch ($type) {
@@ -111,6 +112,7 @@ function validate(string $t, array $in): array {
             case 'month': if (!preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', (string)$v)) fail('Dönem YYYY-AA biçiminde olmalı.'); $vals[$col] = $v; break;
             case 'money': if (!is_numeric($v) || abs((float)$v) > 1e12) fail((ETIKET[$k] ?? $k) . ' sayı olmalı.'); $vals[$col] = round((float)$v, 2); break;
             case 'pct': if (!is_numeric($v) || $v < 0 || $v > 100) fail('Oran 0 ile 100 arasında olmalı.'); $vals[$col] = (float)$v; break;
+            case 'int': if (!preg_match('/^\d+$/', (string)$v) || (int)$v < $opt[0] || (int)$v > $opt[1]) fail('Vade ' . $opt[0] . ' ile ' . $opt[1] . ' gün arasında tam sayı olmalı.'); $vals[$col] = (int)$v; break;
             case 'tevkifat': if (!in_array((int)$v, [0, 2, 3, 4, 5, 7, 9, 10], true)) fail('Tevkifat oranı geçersiz.'); $vals[$col] = (int)$v; break;
             case 'ref':
                 if (!ctype_digit((string)$v)) fail('Geçersiz bağlantı: ' . $k);
@@ -286,6 +288,25 @@ function send_sandboxed_html(string $html): void {
     header("Content-Security-Policy: sandbox allow-scripts allow-modals allow-popups; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:");
     header('Cache-Control: private, no-store');
     echo $html;
+}
+/** Tüm tabloların yapısı ve kayıtları (phpMyAdmin ile içe aktarılabilir SQL). */
+function sql_dump(): string {
+    $pdo = db();
+    $out = "-- Cari Takip veritabanı yedeği · " . date('Y-m-d H:i:s') . "\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n";
+    foreach ($pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN) as $t) {
+        if ($t === 'giris_denemeleri') continue;
+        $create = $pdo->query("SHOW CREATE TABLE `$t`")->fetch(PDO::FETCH_NUM)[1];
+        $out .= "DROP TABLE IF EXISTS `$t`;\n$create;\n";
+        $rows = $pdo->query("SELECT * FROM `$t`");
+        $buf = [];
+        while ($r = $rows->fetch(PDO::FETCH_ASSOC)) {
+            $buf[] = '(' . implode(',', array_map(fn($v) => $v === null ? 'NULL' : $pdo->quote((string)$v), $r)) . ')';
+            if (count($buf) >= 200) { $out .= "INSERT INTO `$t` VALUES\n" . implode(",\n", $buf) . ";\n"; $buf = []; }
+        }
+        if ($buf) $out .= "INSERT INTO `$t` VALUES\n" . implode(",\n", $buf) . ";\n";
+        $out .= "\n";
+    }
+    return $out . "SET FOREIGN_KEY_CHECKS = 1;\n";
 }
 function remove_pdf_file(string $rel): void { if ($p = safe_pdf_path($rel)) @unlink($p); }
 
@@ -470,10 +491,40 @@ switch ($a) {
             $yeni['odeme_yontemleri'] = implode("\n", $l);
         }
         if (array_key_exists('logo_koyu', $b)) { $v = (string)$b['logo_koyu']; if (!in_array($v, ['normal', 'beyaz', 'ters'], true)) fail('Geçersiz logo görünümü.'); $yeni['logo_koyu'] = $v; }
+        if (array_key_exists('vade_uyari_gun', $b)) { $v = (int)$b['vade_uyari_gun']; if ($v < 0 || $v > 60) fail('Vade uyarısı 0 ile 60 gün arasında olmalı.'); $yeni['vade_uyari_gun'] = (string)$v; }
         if (array_key_exists('ag_gun', $b)) { $v = (int)$b['ag_gun']; if ($v < 0 || $v > 31) fail('Gün sayısı 0 ile 31 arasında olmalı.'); $yeni['ag_gun'] = (string)$v; }
         foreach ($yeni as $k => $v) ayar_yaz($k, $v);
         audit('ayarlar', null, 'guncelle', null, $yeni);
         out(['ok' => true, 'ayarlar' => ayarlar_genel(true)]);
+
+    case 'yedek':
+        // Tek dosyada tam yedek: veritabanı (SQL) + fatura belgeleri. Yalnızca yönetici.
+        $needAdmin();
+        if (!class_exists('ZipArchive')) fail('Sunucuda PHP zip eklentisi kapalı; yedek oluşturulamıyor. Hosting panelinden zip eklentisini açın.', 500);
+        session_write_close();
+        @set_time_limit(600);
+        $tmp = @tempnam(sys_get_temp_dir(), 'yedek');
+        if (!$tmp || !is_writable($tmp)) $tmp = pdf_root() . '/_yedek_' . bin2hex(random_bytes(6)) . '.tmp';
+        $z = new ZipArchive();
+        if ($z->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) fail('Yedek dosyası oluşturulamadı.', 500);
+        $z->addFromString('veritabani.sql', sql_dump());
+        $root = pdf_root(); $n = 0;
+        foreach (db()->query('SELECT pdf_yol FROM faturalar WHERE pdf_yol IS NOT NULL') as $r) {
+            if ($p = safe_pdf_path((string)$r['pdf_yol'])) { $z->addFile($p, 'belgeler/' . $r['pdf_yol']); $n++; }
+        }
+        $z->addFromString('BENIOKU.txt', "Cari Takip yedeği · " . date('d.m.Y H:i') . "\r\n\r\n" .
+            "veritabani.sql : tüm tablolar ve kayıtlar. Geri yüklemek için boş bir veritabanında phpMyAdmin > İçe aktar ile çalıştırın.\r\n" .
+            "belgeler/      : fatura PDF / e-Fatura dosyaları ($n dosya). Geri yüklerken içeriği PDF klasörüne (cari-belgeler veya pdf-arsiv) kopyalayın.\r\n");
+        $z->close();
+        audit('ayarlar', null, 'yedek', null, ['belge' => $n]);
+        ayar_yaz('son_yedek', date('Y-m-d H:i'));
+        $ad = 'cari-yedek-' . date('Y-m-d-Hi') . '.zip';
+        header('Content-Type: application/zip');
+        header('Content-Length: ' . filesize($tmp));
+        header('Content-Disposition: attachment; filename="' . $ad . '"');
+        header('Cache-Control: private, no-store');
+        readfile($tmp); @unlink($tmp);
+        exit;
 
     case 'logo_yukle':
         $needAdmin();

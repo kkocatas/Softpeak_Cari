@@ -62,20 +62,29 @@ Giriş adresi: `https://ALANADINIZ.com/cari/`
 
 ## Kullanım
 
-- **Yönetici** her şeyi ekler, düzenler, siler. **Salt okunur** kullanıcı (mali müşavir) her ekranı görür, PDF'leri açıp indirir, ekstre yazdırır, CSV alır; hiçbir şeyi değiştiremez.
+- **Yönetici** her şeyi ekler, düzenler, siler. **Salt okunur** kullanıcı (mali müşavir) her ekranı görür, PDF'leri açıp indirir, ekstre yazdırır, Excel ve mali müşavir paketi indirir; hiçbir şeyi değiştiremez.
 - **Fatura PDF'i:** Fatura penceresinde "PDF seç". Yeni faturada PDF seçince fatura no, tarih, matrah, KDV ve VKN'ye göre cari boş alanlara yazılır.
 - **e-Fatura zip / XML:** GİB e-Arşiv / e-Fatura portalından indirilen zip dosyaları (içinde UBL XML + HTML) arşiv ekranına doğrudan sürüklenebilir. Fatura no, tarih, taraflar, matrah, KDV, tevkifat ve kalemler XML'den kesin olarak okunur; zip olduğu gibi saklanır ve uygulamadan resmî görünümüyle açılır. Tek zip'te birden çok fatura varsa her biri ayrı kaydedilir.
 - **Geçmiş faturalar:** "PDF arşiv yükle" ekranına PDF'leri sürükleyin. Her dosyanın bilgileri PDF içinden okunur, VKN'si kayıtlı bir cariyle eşleşirse cari ve fatura türü kendiliğinden seçilir. Satırları kontrol edip "Kaydet"e basın. Aynı cari için aynı fatura numarası ikinci kez kaydedilmez.
   - Okuma GİB e-Fatura / e-Arşiv PDF'lerinde en iyi sonucu verir. Taranmış (resim) PDF'lerde metin olmadığı için bilgileri elle girersiniz; PDF yine eklenir.
   - Önce müşterileri ve personeli VKN'leriyle ekleyin; eşleşme bu sayede çalışır. Eşleşmeyen VKN için satırda "cari olarak ekle" bağlantısı çıkar.
 - **Ödemeleri faturalara bağlama:** Ödeme/tahsilat penceresinde carinin açık faturaları listelenir; tutar eskiden yeniye otomatik dağıtılır, isterseniz elle değiştirirsiniz. Bir fatura birden çok ödemeyle kapanabilir; bir faturaya dağıtılan toplam fatura tutarını aşamaz (sunucu da kontrol eder). Faturalar "Açık / Kısmi / Ödendi" durumuyla görünür. Faturaya bağlanmamış eski ödemeler için cari ekstresinde "Faturalarla eşleştir" düğmesi çıkar.
-- **Raporlar:** Personel veya müşteri bazında, seçilen tarih aralığında net (KDV hariç), KDV, KDV dahil, ödenecek, ödenen ve kalan tutarlar; satıra tıklayınca faturaları açılır. CSV olarak indirilebilir.
+- **Raporlar:** Personel veya müşteri bazında, seçilen tarih aralığında net (KDV hariç), KDV, KDV dahil, ödenecek, ödenen ve kalan tutarlar; satıra tıklayınca faturaları açılır. Excel (.xlsx) olarak indirilebilir.
+- **Vade:** Müşteri (ve personel) kartına vade günü girilir; faturada ayrıca vade girilmezse fatura tarihi + bu gün vade sayılır. Vadesi geçen ya da Ayarlar'daki gün sayısı kadar yaklaşan açık faturalar girişte, menüde ve Özet > Yapılacaklar'da uyarılır.
+- **Yapılacaklar (Özet):** vadesi geçen/yaklaşan tahsilat ve ödemeler, müşterisi ödediği hâlde ödenmemiş personel faturaları, dönemi için faturası gelmeyen ya da müşteriye fatura kesilmemiş personel, 30 günü geçen yedek.
+- **Personel ödemeleri:** personelin açık faturaları, aynı dönemde müşterinin o personel için kesilen faturayı ödeyip ödemediğiyle birlikte listelenir; seçilenler tek seferde ödenir.
+- **Mali müşavir paketi:** Faturalar ekranında; seçilen ayın fatura belgeleri ve Excel listesi tek zip.
+- **Arama:** her ekranda Ctrl+K (veya /) ile cari, fatura no, açıklama veya tutar aranır.
+- **Sürükle-bırak:** fatura PDF / e-Fatura zip dosyaları herhangi bir ekrana bırakılabilir; açık bir fatura penceresine bırakılan tek dosya o faturaya eklenir.
+- **Tema:** üst çubuktaki düğmeyle açık / koyu tema; seçim tarayıcıda hatırlanır.
 - **Yazdırma:** Her listede ve cari ekstresinde "Yazdır" düğmesi var; PDF'ler "Aç / yazdır" ile tarayıcıda açılır.
 - **İşlem kaydı:** Ayarlar ekranında kimin neyi ne zaman eklediği, değiştirdiği, sildiği görünür.
 
 ## Yedekleme
 
-Faturalarınız bu sunucuda tek kopya. cPanel > **Yedekleme** (veya JetBackup) ile hem veritabanını hem `cari-belgeler` klasörünü düzenli yedekleyin; ayda bir yedeği bilgisayarınıza da indirin.
+Ayarlar > **Yedekleme > Tam yedeği indir**: veritabanının tamamı (veritabani.sql) ve tüm fatura belgeleri tek zip dosyası olarak iner (sunucuda PHP zip eklentisi gerekir). Geri yüklemek için: boş veritabanında phpMyAdmin > İçe aktar ile veritabani.sql, ardından belgeler klasörünün içeriğini PDF klasörüne kopyalayın.
+
+Ayrıca hosting panelinden de yedek alın: cPanel > **Yedekleme** (veya JetBackup) ile hem veritabanını hem `cari-belgeler` klasörünü düzenli yedekleyin; ayda bir yedeği bilgisayarınıza da indirin.
 
 ## Dosyalar
 
