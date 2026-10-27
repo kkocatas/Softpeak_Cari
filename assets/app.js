@@ -4,7 +4,7 @@
 const COLS = ["cariler", "projeler", "faturalar", "hareketler"];
 const S = {
   me: null, csrf: "", firmaVkn: "", ay: {}, pdfMaxMb: 20, canWrite: false, loaded: false,
-  data: { cariler: [], projeler: [], faturalar: [], hareketler: [], dagitim: [] },
+  data: { cariler: [], projeler: [], faturalar: [], hareketler: [], dagitim: [] }, acikFat: {}, bosAcik: false,
   agGun: (() => { try { const x = localStorage.getItem("cari-ag-gun"); return x !== null && x !== "" ? x : null; } catch (e) { return null; } })(),
   rTip: "personel", rBas: "", rBit: "", rQ: "", rAcik: {}, fDurum: "tum",
   view: "ozet", detail: null, donem: ymNow(), fTur: "tum", fDonem: "", fQ: "", hTur: "tum", hQ: "",
@@ -307,13 +307,58 @@ function ekstreTable(rows, showCari, sel) {
   return h + '</tbody><tfoot><tr><td colspan="' + ((showCari ? 4 : 3) + (sel ? 1 : 0)) + '">Toplam</td><td class="num">' + tl(tb) + '</td><td class="num">' + tl(ta) + '</td><td class="num">' + balHtml(tb - ta) + "</td></tr></tfoot></table></div>";
 }
 
+/* Cari fatura listesi: yalnız faturalar; satıra tıklayınca altında o faturanın ödemeleri açılır. */
+function fatOdemeListe(fid) {
+  return S.data.dagitim.filter(d => d.faturaId === fid).map(d => ({ d, h: S.data.hareketler.find(x => x.id === d.hareketId) })).filter(x => x.h)
+    .sort((a, b) => (a.h.tarih || "").localeCompare(b.h.tarih || ""));
+}
+function cariFaturaTable(id, c) {
+  const fs = S.data.faturalar.filter(f => f.cariId === id).sort((a, b) => (b.tarih || "").localeCompare(a.tarih || "") || String(b.id).localeCompare(String(a.id), undefined, { numeric: true }));
+  const sel = S.canWrite, g = c.tip === "personel", odeAd = g ? "Ödeme" : "Tahsilat", cols = 7 + (sel ? 1 : 0);
+  if (!fs.length) return '<div class="empty">Bu cariye ait fatura yok.</div>';
+  let h = '<div class="tw"><table class="fatlist"><thead><tr>' + (sel ? '<th class="sel"><input type="checkbox" data-sel="fat-all" aria-label="Tüm faturaları seç"' + (fs.every(f => S.selFat.has(f.id)) ? " checked" : "") + "></th>" : "") +
+    '<th>Tarih</th><th>Fatura</th><th class="num">Tutar</th><th class="num">' + (g ? "Ödenen" : "Tahsil edilen") + '</th><th class="num">Kalan</th><th>' + odeAd + ' tarihi</th><th>Durum</th></tr></thead><tbody>';
+  let tT = 0, tO = 0;
+  fs.forEach(f => {
+    const cf = calcF(f), od = odenenF(f.id), kal = r2(cf.net - od), ops = fatOdemeListe(f.id), ac = !!S.acikFat[f.id], on = sel && S.selFat.has(f.id);
+    tT += cf.net; tO += od;
+    const tarihler = [...new Set(ops.map(x => x.h.tarih))];
+    h += '<tr class="click fat-row' + (on ? " selected" : "") + (ac ? " open" : "") + '" data-fac="' + f.id + '" aria-expanded="' + ac + '">' + (sel ? '<td class="sel"><input type="checkbox" data-sel="fat" value="' + f.id + '" aria-label="Faturayı seç"' + (on ? " checked" : "") + "></td>" : "") +
+      '<td style="white-space:nowrap"><span class="caret" aria-hidden="true">▸</span> ' + fd(f.tarih) + "</td>" +
+      "<td><b>" + esc(f.no || "—") + "</b> " + pdfLink(f) + (f.aciklama ? '<div class="small muted">' + esc(f.aciklama) + "</div>" : "") + (f.donem ? '<div class="small muted">Dönem: ' + ymLabel(f.donem) + "</div>" : "") + "</td>" +
+      '<td class="num">' + tl(cf.net) + '<div class="small muted kdvli">KDV hariç ' + tl(cf.matrah) + "</div></td>" +
+      '<td class="num">' + (od > 0.004 ? tl(od) : "—") + '</td><td class="num">' + (kal > 0.004 ? "<b>" + tl(kal) + "</b>" : "—") + "</td>" +
+      '<td style="white-space:nowrap">' + (tarihler.length ? fd(tarihler[tarihler.length - 1]) + (tarihler.length > 1 ? '<div class="small muted">' + ops.length + " " + odeAd.toLocaleLowerCase("tr") + "</div>" : "") : '<span class="muted">—</span>') + "</td>" +
+      "<td>" + durumChipF(f) + "</td></tr>";
+    if (ac) {
+      let d = '<tr class="fat-detay"><td colspan="' + cols + '"><div class="fd-box">';
+      d += '<div class="fd-ozet"><span>Matrah <b>' + tl(cf.matrah) + "</b></span><span>KDV %" + num(f.kdvOran) + " <b>" + tl(cf.kdv) + "</b></span>" + (cf.tevkif ? "<span>Tevkifat <b>−" + tl(cf.tevkif) + "</b></span>" : "") + (cf.stopaj ? "<span>Stopaj <b>−" + tl(cf.stopaj) + "</b></span>" : "") + "<span>KDV dahil <b>" + tl(cf.brut) + "</b></span><span>" + (g ? "Ödenecek" : "Tahsil edilecek") + " <b>" + tl(cf.net) + "</b></span></div>";
+      d += ops.length ? '<table class="mini"><thead><tr><th>' + odeAd + ' tarihi</th><th>Yöntem</th><th>Açıklama</th><th class="num">Bu faturaya</th><th class="num">' + odeAd + ' toplamı</th>' + (S.canWrite ? "<th></th>" : "") + "</tr></thead><tbody>" +
+        ops.map(x => "<tr><td>" + fd(x.h.tarih) + "</td><td>" + esc(x.h.yontem || "") + '</td><td class="small">' + esc(x.h.aciklama || "") + '</td><td class="num"><b>' + tl(x.d.tutar) + '</b></td><td class="num muted">' + tl(num(x.h.tutar)) + "</td>" + (S.canWrite ? '<td class="num"><button class="btn ghost sm" data-edit="hareket:' + x.h.id + '">Düzenle</button></td>' : "") + "</tr>").join("") +
+        '</tbody><tfoot><tr><td colspan="3">Toplam ' + (g ? "ödenen" : "tahsil edilen") + '</td><td class="num">' + tl(od) + '</td><td colspan="' + (S.canWrite ? 2 : 1) + '" class="num">' + (kal > 0.004 ? "Kalan " + tl(kal) : "") + "</td></tr></tfoot></table>"
+        : '<div class="small muted">Bu faturaya henüz ' + odeAd.toLocaleLowerCase("tr") + " bağlanmadı.</div>";
+      if (S.canWrite) d += '<div class="actions">' + (kal > 0.004 ? '<button class="btn primary sm" data-act="pay-fatura" data-id="' + f.id + '">+ ' + odeAd + " ekle</button>" : "") + '<button class="btn sm" data-edit="fatura:' + f.id + '">Faturayı düzenle</button></div>';
+      h += d + "</div></td></tr>";
+    }
+  });
+  h += '</tbody><tfoot><tr><td colspan="' + (2 + (sel ? 1 : 0)) + '">Toplam · ' + fs.length + ' fatura</td><td class="num">' + tl(tT) + '</td><td class="num">' + tl(tO) + '</td><td class="num">' + tl(tT - tO) + '</td><td colspan="2"></td></tr></tfoot></table></div>';
+  const bos = S.data.hareketler.filter(x => x.cariId === id && bosH(x) > 0.004);
+  if (bos.length) {
+    const bt = r2(bos.reduce((t, x) => t + bosH(x), 0));
+    h += '<div class="bos-not"><button class="linkbtn" data-act="bos-toggle">' + (S.bosAcik ? "▾" : "▸") + " Faturaya bağlanmamış " + odeAd.toLocaleLowerCase("tr") + ": " + tl(bt) + " (" + bos.length + " işlem)</button>";
+    if (S.bosAcik) h += '<table class="mini"><tbody>' + bos.sort((a, b) => (b.tarih || "").localeCompare(a.tarih || "")).map(x => "<tr><td>" + fd(x.tarih) + "</td><td>" + esc(x.yontem || "") + '</td><td class="small">' + esc(x.aciklama || "") + '</td><td class="num">' + tl(bosH(x)) + "</td>" + (S.canWrite ? '<td class="num"><button class="btn ghost sm" data-edit="hareket:' + x.id + '">Düzenle</button></td>' : "") + "</tr>").join("") + "</tbody></table>";
+    h += "</div>";
+  }
+  return h;
+}
+
 function vCari(id) {
   const c = cari(id); if (!c) { S.detail = null; return vCariList("personel"); }
   const b = bakiye(id), rows = movements(id);
   let h = printHead("Cari ekstre · " + c.ad) + '<button class="back" data-nav="' + (c.tip === "personel" ? "personel" : "musteri") + '">← ' + (c.tip === "personel" ? "Personel" : "Müşteriler") + "</button>";
   h += '<div class="top"><div><h1>' + esc(c.ad) + '</h1><div class="meta"><span>' + (c.tip === "personel" ? "Personel" : "Müşteri") + "</span>" + (c.vkn ? "<span>VKN/TCKN " + esc(c.vkn) + "</span>" : "") + (c.telefon ? '<span>Tel: <a href="tel:' + esc(c.telefon.replace(/[^0-9+]/g, "")) + '">' + esc(c.telefon) + "</a></span>" : "") + (c.eposta ? '<span>E-posta: <a href="mailto:' + esc(c.eposta) + '">' + esc(c.eposta) + "</a></span>" : "") +
     (c.tip === "personel" && c.musteriId ? "<span>Hizmet verdiği: " + esc(cariAd(c.musteriId)) + "</span>" : "") + (c.baslangic ? "<span>Başlangıç " + fd(c.baslangic) + "</span>" : "") + (c.durum === "pasif" ? '<span class="chip mute">Pasif</span>' : "") + "</div></div>" +
-    '<div class="actions"><button class="btn" data-act="print">Ekstreyi yazdır</button>' + (S.canWrite ? '<button class="btn" data-act="edit-cari" data-id="' + id + '">Düzenle</button><button class="btn" data-act="new-hareket" data-cari="' + id + '">+ ' + (c.tip === "personel" ? "Ödeme" : "Tahsilat") + '</button><button class="btn primary" data-act="new-fatura" data-cari="' + id + '">+ ' + (c.tip === "personel" ? "Gelen fatura" : "Kesilen fatura") + "</button>" : "") + "</div></div>";
+    '<div class="actions"><button class="btn" data-act="print">Yazdır</button>' + (S.canWrite ? '<button class="btn" data-act="edit-cari" data-id="' + id + '">Düzenle</button><button class="btn" data-act="new-hareket" data-cari="' + id + '">+ ' + (c.tip === "personel" ? "Ödeme" : "Tahsilat") + '</button><button class="btn primary" data-act="new-fatura" data-cari="' + id + '">+ ' + (c.tip === "personel" ? "Gelen fatura" : "Kesilen fatura") + "</button>" : "") + "</div></div>";
   const fs = S.data.faturalar.filter(f => f.cariId === id), hs = S.data.hareketler.filter(x => x.cariId === id);
   const fat = fs.reduce((s, f) => s + calcF(f).net, 0), od = hs.reduce((s, x) => s + num(x.tutar), 0), sonOd = hs.map(x => x.tarih).sort().pop();
   h += '<div class="kpis">' + kpi("Bakiye", balHtml(b), b > 0 ? "Karşı taraf borçlu" : b < 0 ? "Firmanız borçlu" : "Kapalı") +
@@ -334,7 +379,7 @@ function vCari(id) {
     const bt = r2(bos.reduce((t, x) => t + bosH(x), 0));
     selBar += '<div class="banner"><span><b>' + tl(bt) + " tutarında " + (c.tip === "personel" ? "ödeme" : "tahsilat") + ' hiçbir faturaya bağlı değil.</b> Eskiden yeniye açık faturalara otomatik eşleştirebilirsiniz.</span><button class="btn" data-act="auto-match" data-id="' + id + '">Faturalarla eşleştir</button></div>';
   }
-  h += selBar + '<div class="panel"><div class="panel-head"><h2>Cari ekstre</h2><span class="small muted">En yeni kayıt en üstte · (B) borçlu · (A) alacaklı</span></div>' + ekstreTable(rows, false, true) + "</div>";
+  h += selBar + '<div class="panel"><div class="panel-head"><h2>Faturalar</h2><span class="small muted">En yeni fatura en üstte · ' + (c.tip === "personel" ? "ödeme" : "tahsilat") + ' detayı için faturaya tıklayın</span>' + (Object.keys(S.acikFat).length ? '<button class="btn ghost sm noprint" data-act="fat-kapat">Tümünü kapat</button>' : '<button class="btn ghost sm noprint" data-act="fat-ac">Tümünü aç</button>') + "</div>" + cariFaturaTable(id, c) + "</div>";
   return h;
 }
 
@@ -1199,12 +1244,13 @@ document.addEventListener("click", e => {
   if (selCell) { if (e.target === selCell) { const cb = selCell.querySelector("input"); if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event("change", { bubbles: true })); } } return; }
   const tx = e.target.closest("[data-imp-text]"); if (tx) { e.preventDefault(); textModal(S.imp[+tx.dataset.impText]); return; }
   const vw = e.target.closest("[data-imp-view]"); if (vw) { e.preventDefault(); const r = S.imp[+vw.dataset.impView]; if (r) window.open(URL.createObjectURL(r.file), "_blank"); return; }
-  const t = e.target.closest("button,tr[data-open],tr[data-edit],tr[data-user],tr[data-racik],[data-m],a[data-act]"); if (!t) return;
+  const t = e.target.closest("button,tr[data-open],tr[data-edit],tr[data-user],tr[data-racik],tr[data-fac],[data-m],a[data-act]"); if (!t) return;
   if (t.tagName === "A" && t.dataset.act) e.preventDefault();
   if (t.dataset.nav) { S.view = t.dataset.nav; S.detail = null; if (S.view === "ayar") loadAyar(); render(); window.scrollTo(0, 0); return; }
   if (t.dataset.open) { S.detail = { type: "cari", id: t.dataset.open }; S.view = (cari(t.dataset.open) || {}).tip === "personel" ? "personel" : "musteri"; render(); window.scrollTo(0, 0); return; }
   if (t.dataset.proje) { S.detail = { type: "proje", id: t.dataset.proje }; S.view = "proje"; render(); window.scrollTo(0, 0); return; }
   if (t.dataset.edit) { const [k, id] = t.dataset.edit.split(":"); const rec = S.data[k === "fatura" ? "faturalar" : "hareketler"].find(x => x.id === id); if (rec) openModal(k, rec); return; }
+  if (t.dataset.fac) { if (S.acikFat[t.dataset.fac]) delete S.acikFat[t.dataset.fac]; else S.acikFat[t.dataset.fac] = 1; render(); return; }
   if (t.dataset.user) { userModal((S.users || []).find(u => String(u.id) === t.dataset.user)); return; }
   if (t.dataset.donem) { S.donem = ymShift(S.donem, +t.dataset.donem); render(); return; }
   if (t.dataset.ftur) { S.fTur = t.dataset.ftur; render(); return; }
@@ -1238,6 +1284,9 @@ document.addEventListener("click", e => {
   else if (a === "logo-sil") { api("logo_sil", { method: "POST" }).then(j => { ayarUygula(j.ayarlar); toast("Logo kaldırıldı"); }).catch(er => toast(er.message)); }
   else if (a === "csv-agrapor") agRaporCsv();
   else if (a === "acik-doldur") aciklamalariDoldur();
+  else if (a === "bos-toggle") { S.bosAcik = !S.bosAcik; render(); }
+  else if (a === "fat-ac") { const cid = S.detail && S.detail.id; S.data.faturalar.filter(f => f.cariId === cid).forEach(f => { S.acikFat[f.id] = 1; }); render(); }
+  else if (a === "fat-kapat") { S.acikFat = {}; render(); }
   else if (a === "auto-match") autoMatch(t.dataset.id);
   else if (a === "pay-fatura") { const f = S.data.faturalar.find(x => x.id === t.dataset.id); if (f) { const k = kalanF(f); openModal("hareket", null, { cariId: f.cariId, tur: f.tur === "gelen" ? "odeme" : "tahsilat", dag: { [f.id]: k } }); document.getElementById("m-tutar").value = nf.format(k); document.getElementById("m-acik").value = (f.tur === "gelen" ? "Fatura ödemesi: " : "Fatura tahsilatı: ") + (f.no || fd(f.tarih)); updDag(); } }
   else if (a === "logout") { api("logout", { method: "POST" }).finally(() => location.reload()); }

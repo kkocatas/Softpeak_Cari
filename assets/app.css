@@ -247,3 +247,21 @@ table.agr td:first-child{white-space:nowrap}
 .kdvli{font-family:var(--f-num);font-size:11px;font-weight:400;white-space:nowrap;margin-top:2px}
 tfoot .kdvli{font-weight:400}
 .kv dd .kdvli{text-align:right}
+
+/* cari fatura listesi: satıra tıklayınca ödeme detayı */
+.btn.sm{padding:4px 10px;font-size:12px;min-height:0}
+.panel-head .btn.sm{margin-left:auto;align-self:center}
+.linkbtn{background:none;border:0;padding:0;color:var(--accent);font:inherit;font-size:13px;cursor:pointer}
+.linkbtn:hover{text-decoration:underline}
+table.fatlist .caret{display:inline-block;width:12px;color:var(--muted);transition:transform .15s}
+table.fatlist tr.open .caret{transform:rotate(90deg);color:var(--accent)}
+table.fatlist tr.open td{border-bottom-color:transparent}
+tr.fat-detay>td{background:var(--sunk);padding:0 12px 14px}
+.fd-box{border-left:2px solid var(--accent);padding:12px 14px;display:flex;flex-direction:column;gap:10px;margin-left:4px}
+.fd-ozet{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:var(--muted)}
+.fd-ozet b{color:var(--fg);font-family:var(--f-num);font-weight:500;margin-left:4px}
+.fd-box table.mini{background:var(--surface)}
+.fd-box .actions{display:flex;gap:8px;flex-wrap:wrap}
+.bos-not{padding:12px 16px 4px;border-top:1px solid var(--line)}
+.bos-not table.mini{margin-top:8px}
+@media print{.noprint,.fd-box .actions,.fd-box .btn,.bos-not .btn{display:none}}
