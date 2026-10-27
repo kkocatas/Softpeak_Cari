@@ -7,7 +7,7 @@ header('Cache-Control: no-store');
 $user = null;
 try { $user = current_user(); }
 catch (Throwable $t) { http_response_code(500); exit('Veritabanına bağlanılamadı. config.php ayarlarını kontrol edin veya setup.php ile kurulumu tamamlayın.'); }
-$v = '17';
+$v = '18';
 $marka = 'Cari Takip'; $logo = null; $logoKoyu = 'normal';
 try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logoKoyu = ayar('logo_koyu') ?: 'normal'; } catch (Throwable $t) { /* ayarlar okunamazsa varsayılan ad */ }
 ?><!doctype html>
