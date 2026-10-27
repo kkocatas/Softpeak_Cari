@@ -4,7 +4,7 @@
 const COLS = ["cariler", "projeler", "faturalar", "hareketler"];
 const S = {
   me: null, csrf: "", firmaVkn: "", ay: {}, pdfMaxMb: 20, canWrite: false, loaded: false,
-  data: { cariler: [], projeler: [], faturalar: [], hareketler: [], dagitim: [] }, acikFat: {}, bosAcik: false, yapAcik: {}, selOde: new Set(), oFiltre: null, ara: null,
+  data: { cariler: [], projeler: [], faturalar: [], hareketler: [], dagitim: [] }, acikFat: {}, bosAcik: false, yapAcik: {}, yapKapali: (() => { try { return localStorage.getItem("cari-yap-kapali") === "1"; } catch (e) { return false; } })(), selOde: new Set(), oFiltre: null, ara: null,
   agGun: (() => { try { const x = localStorage.getItem("cari-ag-gun"); return x !== null && x !== "" ? x : null; } catch (e) { return null; } })(),
   rTip: "personel", rBas: "", rBit: "", rQ: "", rAcik: {}, fDurum: "tum",
   view: "ozet", detail: null, donem: ymNow(), fTur: "tum", fDonem: "", fQ: "", hTur: "tum", hQ: "",
@@ -200,7 +200,7 @@ function navItems() {
 }
 function renderNav() {
   const counts = { personel: S.data.cariler.filter(c => c.tip === "personel").length, musteri: S.data.cariler.filter(c => c.tip === "musteri").length, proje: S.data.projeler.length, fatura: S.data.faturalar.length, hareket: S.data.hareketler.length };
-  const uyari = { ozet: S.loaded ? vadeListe().length : 0, odenecek: S.loaded ? odenecekler().filter(x => x.d === "tahsil").length : 0 };
+  const uyari = { ozet: S.loaded ? vadeAktif().length : 0, odenecek: S.loaded ? odenecekler().filter(x => x.d === "tahsil").length : 0 };
   document.getElementById("nav").innerHTML = navItems().map(([k, l]) => '<button data-nav="' + k + '" aria-current="' + (S.view === k) + '">' + l + (uyari[k] ? '<span class="cnt uyari" title="' + (k === "ozet" ? "Vadesi geçen / yaklaşan fatura" : "Müşterisi ödedi, ödenebilir") + '">' + uyari[k] + "</span>" : counts[k] != null ? '<span class="cnt">' + counts[k] + "</span>" : "") + "</button>").join("") +
     '<button class="nav-logout" data-act="logout">Çıkış yap</button>';
 }
@@ -337,10 +337,10 @@ function cariFaturaTable(id, c) {
       let d = '<tr class="fat-detay"><td colspan="' + cols + '"><div class="fd-box">';
       d += '<div class="fd-ozet"><span>Matrah <b>' + tl(cf.matrah) + "</b></span><span>KDV %" + num(f.kdvOran) + " <b>" + tl(cf.kdv) + "</b></span>" + (cf.tevkif ? "<span>Tevkifat <b>−" + tl(cf.tevkif) + "</b></span>" : "") + (cf.stopaj ? "<span>Stopaj <b>−" + tl(cf.stopaj) + "</b></span>" : "") + "<span>KDV dahil <b>" + tl(cf.brut) + "</b></span><span>" + (g ? "Ödenecek" : "Tahsil edilecek") + " <b>" + tl(cf.net) + "</b></span></div>";
       d += ops.length ? '<table class="mini"><thead><tr><th>' + odeAd + ' tarihi</th><th>Yöntem</th><th>Açıklama</th><th class="num">Bu faturaya</th><th class="num">' + odeAd + ' toplamı</th>' + (S.canWrite ? "<th></th>" : "") + "</tr></thead><tbody>" +
-        ops.map(x => "<tr><td>" + fd(x.h.tarih) + "</td><td>" + esc(x.h.yontem || "") + '</td><td class="small">' + esc(x.h.aciklama || "") + '</td><td class="num"><b>' + tl(x.d.tutar) + '</b></td><td class="num muted">' + tl(num(x.h.tutar)) + "</td>" + (S.canWrite ? '<td class="num"><button class="btn ghost sm" data-edit="hareket:' + x.h.id + '">Düzenle</button></td>' : "") + "</tr>").join("") +
+        ops.map(x => "<tr><td>" + fd(x.h.tarih) + "</td><td>" + esc(x.h.yontem || "") + '</td><td class="small">' + esc(x.h.aciklama || "") + '</td><td class="num"><b>' + tl(x.d.tutar) + '</b></td><td class="num muted">' + tl(num(x.h.tutar)) + "</td>" + (S.canWrite ? '<td class="num" style="white-space:nowrap"><button class="btn ghost sm" data-edit="hareket:' + x.h.id + '">Düzenle</button><button class="btn ghost sm sil" data-sil="hareket:' + x.h.id + '">Sil</button></td>' : "") + "</tr>").join("") +
         '</tbody><tfoot><tr><td colspan="3">Toplam ' + (g ? "ödenen" : "tahsil edilen") + '</td><td class="num">' + tl(od) + '</td><td colspan="' + (S.canWrite ? 2 : 1) + '" class="num">' + (kal > 0.004 ? "Kalan " + tl(kal) : "") + "</td></tr></tfoot></table>"
         : '<div class="small muted">Bu faturaya henüz ' + odeAd.toLocaleLowerCase("tr") + " bağlanmadı.</div>";
-      if (S.canWrite) d += '<div class="actions">' + (kal > 0.004 ? '<button class="btn primary sm" data-act="pay-fatura" data-id="' + f.id + '">+ ' + odeAd + " ekle</button>" : "") + '<button class="btn sm" data-edit="fatura:' + f.id + '">Faturayı düzenle</button></div>';
+      if (S.canWrite) d += '<div class="actions">' + (kal > 0.004 ? '<button class="btn primary sm" data-act="pay-fatura" data-id="' + f.id + '">+ ' + odeAd + " ekle</button>" : "") + '<button class="btn sm" data-edit="fatura:' + f.id + '">Faturayı düzenle</button><button class="btn sm danger" data-sil="fatura:' + f.id + '">Faturayı sil</button></div>';
       h += d + "</div></td></tr>";
     }
   });
@@ -742,7 +742,9 @@ async function saveImports() {
 /* ---------- ayarlar ---------- */
 function vAyar() {
   let h = '<div class="top"><div><h1>Ayarlar</h1><div class="sub">' + esc(S.me.ad) + " · " + (S.canWrite ? "Yönetici" : "Salt okunur") + '</div></div><div class="actions"><button class="btn" data-act="logout">Çıkış yap</button></div></div>';
-  if (S.canWrite) h += firmaPanel() + '<div class="panel"><div class="panel-head"><h2>Yedekleme</h2><span class="small muted">' + (S.ay.son_yedek ? "Son yedek: " + esc(S.ay.son_yedek) : "Henüz yedek alınmadı") + '</span></div><p class="small" style="margin:0 0 12px">Veritabanının tamamı (SQL) ve tüm fatura belgeleri tek zip dosyası olarak bilgisayarınıza iner. Ayda en az bir kez alıp sunucu dışında saklayın; 30 günü geçince Özet\'te hatırlatılır.</p><button class="btn primary" data-act="yedek">Tam yedeği indir</button></div>';
+  if (S.canWrite) h += firmaPanel() + '<div class="panel"><div class="panel-head"><h2>Yedekleme</h2><span class="small muted">' + (S.ay.son_yedek ? "Son yedek: " + esc(S.ay.son_yedek) : "Henüz yedek alınmadı") + '</span></div><p class="small" style="margin:0 0 12px">Veritabanının tamamı (SQL) ve tüm fatura belgeleri tek zip dosyası olarak bilgisayarınıza iner. Ayda en az bir kez alıp sunucu dışında saklayın; 30 günü geçince Özet\'te hatırlatılır.</p><button class="btn primary" data-act="yedek">Tam yedeği indir</button></div>' +
+    '<div class="panel"><div class="panel-head"><h2>Uygulama güncelleme</h2><span class="small muted">Kurulu sürüm ' + esc(String(window.CARI_SURUM || "")) + '</span></div><p class="small" style="margin:0 0 12px">Size gönderilen güncelleme zip dosyasını buradan yükleyin; sunucu paneline girmeniz gerekmez. Veritabanı ayarları (config.php), kayıtlarınız ve fatura belgeleri değişmez. Mevcut sürümün yedeği otomatik alınır.</p>' +
+    (S.guncelleniyor ? '<span class="small">Güncelleme yükleniyor…</span>' : '<label class="btn" for="a-guncelle">Güncelleme zip\'i seç ve yükle</label>') + '<input type="file" id="a-guncelle" accept=".zip,application/zip" hidden></div>';
   h += '<div class="grid2"><div class="panel"><h2>Şifremi değiştir</h2><form id="pw-form" class="form" style="grid-template-columns:1fr"><label class="f">Mevcut şifre<input type="password" id="pw-old" autocomplete="current-password" required></label><label class="f">Yeni şifre (en az 10 karakter)<input type="password" id="pw-new" autocomplete="new-password" minlength="10" required></label><div><button class="btn primary" type="submit">Şifreyi değiştir</button></div></form></div>';
   if (S.canWrite) {
     h += '<div class="panel"><div class="panel-head"><h2>Kullanıcılar</h2><button class="btn" data-act="new-user">+ Kullanıcı ekle</button></div>';
@@ -1281,33 +1283,47 @@ function odenecekler() {
 }
 
 /* ---------- Özet: yapılacaklar ---------- */
-function yapGrup(key, baslik, items, bos) {
-  if (!items.length) return "";
+function vadeAktif() { const g = yapGizli(); return vadeListe().filter(x => !g.has("vade:" + x.f.id + ":" + x.vade)); }
+function yapGizli() { try { const x = JSON.parse((S.ay && S.ay.yap_gizli) || "[]"); return new Set(Array.isArray(x) ? x : []); } catch (e) { return new Set(); } }
+function yapGrup(key, baslik, items, gizli) {
+  items = items.filter(x => !gizli.has(x.k)); if (!items.length) return { h: "", n: 0 };
   const acik = S.yapAcik[key], gos = acik ? items : items.slice(0, 5);
-  return '<div class="yap-grup"><h3>' + baslik + ' <span class="cnt">' + items.length + "</span></h3><ul>" + gos.join("") + "</ul>" +
-    (items.length > 5 ? '<button class="linkbtn" data-yap="' + key + '">' + (acik ? "Daha az göster" : "+" + (items.length - 5) + " tane daha") + "</button>" : "") + "</div>";
+  return { n: items.length, h: '<div class="yap-grup"><h3>' + baslik + ' <span class="cnt">' + items.length + "</span></h3><ul>" + gos.map(x => x.h).join("") + "</ul>" +
+    (items.length > 5 ? '<button class="linkbtn" data-yap="' + key + '">' + (acik ? "Daha az göster" : "+" + (items.length - 5) + " tane daha") + "</button>" : "") + "</div>" };
 }
-function yapSatir(ana, alt, btns) { return '<li><div><b>' + ana + "</b>" + (alt ? '<div class="small muted">' + alt + "</div>" : "") + '</div><div class="yap-btn">' + btns + "</div></li>"; }
+function yapSatir(k, ana, alt, btns) {
+  return { k, h: '<li><div><b>' + ana + "</b>" + (alt ? '<div class="small muted">' + alt + "</div>" : "") + '</div><div class="yap-btn">' + btns +
+    (S.canWrite ? '<button class="btn ghost sm yap-sil" data-yapsil="' + esc(k) + '" title="Listeden kaldır" aria-label="Listeden kaldır">✕</button>' : "") + "</div></li>" };
+}
 function yapilacaklar(d) {
-  const per = S.data.cariler.filter(c => c.tip === "personel" && c.durum !== "pasif"), W = S.canWrite;
+  const per = S.data.cariler.filter(c => c.tip === "personel" && c.durum !== "pasif"), W = S.canWrite, gizli = yapGizli();
   const vl = vadeListe(), tah = vl.filter(x => x.f.tur === "kesilen"), ode = vl.filter(x => x.f.tur === "gelen");
-  const vs = x => yapSatir(esc(cariAd(x.f.cariId)) + ' <span class="muted">· ' + esc(x.f.no || fd(x.f.tarih)) + "</span>", '<span class="vade ' + (x.gun < 0 ? "gec" : "yak") + '">' + vadeEtiket(x.gun) + "</span> · vade " + fd(x.vade) + " · kalan " + tl(x.kalan),
+  const vs = x => yapSatir("vade:" + x.f.id + ":" + x.vade, esc(cariAd(x.f.cariId)) + ' <span class="muted">· ' + esc(x.f.no || fd(x.f.tarih)) + "</span>", '<span class="vade ' + (x.gun < 0 ? "gec" : "yak") + '">' + vadeEtiket(x.gun) + "</span> · vade " + fd(x.vade) + " · kalan " + tl(x.kalan),
     '<button class="btn sm" data-gitfat="' + x.f.id + '">Aç</button>' + (W ? '<button class="btn sm primary" data-act="pay-fatura" data-id="' + x.f.id + '">' + (x.f.tur === "gelen" ? "Öde" : "Tahsilat gir") + "</button>" : ""));
   const gelmeyen = per.filter(p => !S.data.faturalar.some(f => f.tur === "gelen" && f.cariId === p.id && f.donem === d));
   const kesilmeyen = per.filter(p => p.musteriId && !musteriFaturalari(p.id, d).length);
   const hazir = odenecekler().filter(x => x.d === "tahsil");
-  let h = "";
-  h += yapGrup("tah", "Vadesi geçen / yaklaşan tahsilatlar", tah.map(vs));
-  h += yapGrup("ode", "Vadesi geçen / yaklaşan personel ödemeleri", ode.map(vs));
-  h += yapGrup("hazir", "Müşterisi ödedi, personel ödenmedi", hazir.map(x => yapSatir(esc(cariAd(x.f.cariId)) + ' <span class="muted">· ' + esc(x.f.no || fd(x.f.tarih)) + "</span>", ymLabel(x.f.donem) + " · kalan " + tl(x.kalan), W ? '<button class="btn sm primary" data-act="pay-fatura" data-id="' + x.f.id + '">Öde</button>' : "")));
-  h += yapGrup("gelmeyen", ymLabel(d) + " · faturası gelmeyen personel", gelmeyen.map(p => yapSatir(esc(p.ad), p.musteriId ? esc(cariAd(p.musteriId)) : "", W ? '<button class="btn sm" data-act="new-fatura" data-cari="' + p.id + '" data-fdonem="' + d + '">Fatura gir</button>' : "")));
-  h += yapGrup("kesilmeyen", ymLabel(d) + " · müşteriye fatura kesilmemiş personel", kesilmeyen.map(p => yapSatir(esc(p.ad), "→ " + esc(cariAd(p.musteriId)), W ? '<button class="btn sm" data-act="new-fatura" data-cari="' + p.musteriId + '" data-personel="' + p.id + '" data-fdonem="' + d + '">Fatura kes</button>' : "")));
+  const G = [
+    yapGrup("tah", "Vadesi geçen / yaklaşan tahsilatlar", tah.map(vs), gizli),
+    yapGrup("ode", "Vadesi geçen / yaklaşan personel ödemeleri", ode.map(vs), gizli),
+    yapGrup("hazir", "Müşterisi ödedi, personel ödenmedi", hazir.map(x => yapSatir("hazir:" + x.f.id, esc(cariAd(x.f.cariId)) + ' <span class="muted">· ' + esc(x.f.no || fd(x.f.tarih)) + "</span>", ymLabel(x.f.donem) + " · kalan " + tl(x.kalan), W ? '<button class="btn sm primary" data-act="pay-fatura" data-id="' + x.f.id + '">Öde</button>' : "")), gizli),
+    yapGrup("gelmeyen", ymLabel(d) + " · faturası gelmeyen personel", gelmeyen.map(p => yapSatir("gel:" + p.id + ":" + d, esc(p.ad), p.musteriId ? esc(cariAd(p.musteriId)) : "", W ? '<button class="btn sm" data-act="new-fatura" data-cari="' + p.id + '" data-fdonem="' + d + '">Fatura gir</button>' : "")), gizli),
+    yapGrup("kesilmeyen", ymLabel(d) + " · müşteriye fatura kesilmemiş personel", kesilmeyen.map(p => yapSatir("kes:" + p.id + ":" + d, esc(p.ad), "→ " + esc(cariAd(p.musteriId)), W ? '<button class="btn sm" data-act="new-fatura" data-cari="' + p.musteriId + '" data-personel="' + p.id + '" data-fdonem="' + d + '">Fatura kes</button>' : "")), gizli),
+  ];
   if (W) {
     const sy = S.ay && S.ay.son_yedek, gun = sy ? -gunFark(sy.slice(0, 10)) : null;
-    if (!sy || gun > 30) h += yapGrup("yedek", "Yedek", [yapSatir(sy ? "Son yedek " + gun + " gün önce alındı" : "Henüz yedek alınmadı", "Veritabanı ve fatura belgelerini tek dosyada bilgisayarınıza indirin.", '<button class="btn sm primary" data-act="yedek">Yedek indir</button>')]);
+    if (!sy || gun > 30) G.push(yapGrup("yedek", "Yedek", [yapSatir("yedek:" + (sy || "yok"), sy ? "Son yedek " + gun + " gün önce alındı" : "Henüz yedek alınmadı", "Veritabanı ve fatura belgelerini tek dosyada bilgisayarınıza indirin.", '<button class="btn sm primary" data-act="yedek">Yedek indir</button>')], gizli));
   }
-  return '<div class="panel yap"><div class="panel-head"><h2>Yapılacaklar</h2><span class="small muted">' + ymLabel(d) + " dönemi · vade uyarısı " + uyariGun() + " gün önceden</span></div>" +
-    (h ? '<div class="yap-gruplar">' + h + "</div>" : '<div class="empty small">Bekleyen iş yok.</div>') + "</div>";
+  const n = G.reduce((t, g) => t + g.n, 0), h = G.map(g => g.h).join(""), kapali = S.yapKapali;
+  return '<div class="panel yap' + (kapali ? " kapali" : "") + '"><div class="panel-head"><button class="yap-bas" data-act="yap-ac" aria-expanded="' + !kapali + '"><span class="caret" aria-hidden="true">▸</span><h2>Yapılacaklar</h2>' + (n ? '<span class="cnt uyari">' + n + "</span>" : "") + '</button><span class="small muted">' + ymLabel(d) + " dönemi · vade uyarısı " + uyariGun() + " gün önceden" +
+    (W && gizli.size ? ' · <button class="linkbtn" data-act="yap-geri">Kaldırılanları geri getir (' + gizli.size + ")</button>" : "") + "</span></div>" +
+    (kapali ? "" : h ? '<div class="yap-gruplar">' + h + "</div>" : '<div class="empty small">Bekleyen iş yok.</div>') + "</div>";
+}
+async function yapGizle(k) {
+  const g = yapGizli(); if (k) g.add(k); else g.clear();
+  const eski = S.ay.yap_gizli; S.ay.yap_gizli = JSON.stringify([...g].slice(-500)); render();
+  try { const j = await api("yap_gizle", { body: { liste: [...g].slice(-500) } }); S.ay.yap_gizli = j.yap_gizli; }
+  catch (e) { S.ay.yap_gizli = eski; render(); toast(e.message); }
 }
 
 /* ---------- Personel ödemeleri: müşteri ödedi → personeli öde ---------- */
@@ -1468,6 +1484,17 @@ async function yedekIndir(btn) {
   if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = btn.dataset.t; }
 }
 
+async function guncellemeYukle(file) {
+  if (!/\.zip$/i.test(file.name)) return toast("Güncelleme dosyası .zip olmalı.");
+  S.guncelleniyor = true; render();
+  const f = new FormData(); f.append("paket", file, file.name);
+  try {
+    const j = await api("guncelle", { form: f });
+    toast("Sürüm " + j.surum + " kuruldu (" + j.dosya + " dosya). Sayfa yenileniyor…");
+    setTimeout(() => location.reload(), 1800);
+  } catch (e) { S.guncelleniyor = false; render(); toast("Güncelleme kurulamadı: " + e.message); }
+}
+
 /* ---------- genel arama (Ctrl+K) ---------- */
 function araAc() {
   let r = document.getElementById("ara-root");
@@ -1518,6 +1545,8 @@ document.addEventListener("click", e => {
   const ai = e.target.closest("[data-ara-i]"); if (ai) { araSec(+ai.dataset.araI); return; }
   const t = e.target.closest("button,tr[data-open],tr[data-edit],tr[data-user],tr[data-racik],tr[data-fac],tr[data-gitfat],[data-m],a[data-act]"); if (!t) return;
   if (t.dataset.gitfat) { gitFatura(t.dataset.gitfat); return; }
+  if (t.dataset.sil) { const [k, id] = t.dataset.sil.split(":"); const rec = S.data[k === "fatura" ? "faturalar" : "hareketler"].find(x => x.id === id); if (rec) { openModal(k, rec); rerenderModal(M => { M.confirmDel = true; }); } return; }
+  if (t.dataset.yapsil) { yapGizle(t.dataset.yapsil); return; }
   if (t.dataset.yap) { S.yapAcik[t.dataset.yap] = !S.yapAcik[t.dataset.yap]; render(); return; }
   if (t.dataset.ofiltre) { S.oFiltre = t.dataset.ofiltre; render(); return; }
   if (t.tagName === "A" && t.dataset.act) e.preventDefault();
@@ -1548,6 +1577,8 @@ document.addEventListener("click", e => {
   const a = t.dataset.act;
   if (a === "new-fatura") openModal("fatura", null, { cariId: t.dataset.cari, projeId: t.dataset.proje, personelId: t.dataset.personel, donem: t.dataset.fdonem, tur: t.dataset.personel ? "kesilen" : undefined });
   else if (a === "ara") araAc();
+  else if (a === "yap-ac") { S.yapKapali = !S.yapKapali; try { localStorage.setItem("cari-yap-kapali", S.yapKapali ? "1" : "0"); } catch (e) {} render(); }
+  else if (a === "yap-geri") yapGizle(null);
   else if (a === "tema") temaDegistir();
   else if (a === "yedek") yedekIndir(t);
   else if (a === "paket") paketModal();
@@ -1653,6 +1684,7 @@ document.addEventListener("change", e => {
   if (id === "r-bas") { S.rBas = e.target.value; render(); }
   if (id === "r-bit") { S.rBit = e.target.value; render(); }
   if (id === "a-logokoyu") document.documentElement.setAttribute("data-logo-koyu", e.target.value);
+  if (id === "a-guncelle" && e.target.files[0]) { guncellemeYukle(e.target.files[0]); e.target.value = ""; return; }
   if (id === "a-logo" && e.target.files[0]) { logoYukle(e.target.files[0]); e.target.value = ""; return; }
   if (id === "imp-files") { addImportFiles(e.target.files); e.target.value = ""; return; }
   if (id === "m-pdf" && e.target.files[0]) { pickPdf(e.target.files[0]); return; }
@@ -1704,7 +1736,7 @@ window.addEventListener("beforeunload", e => { if (S.imp.some(r => r.st !== "ok"
     S.loaded = true;
     const h = location.hash.slice(1); if (navItems().some(([k]) => k === h)) S.view = h;
     render();
-    const vl = vadeListe(), gec = vl.filter(x => x.gun < 0).length, yak = vl.length - gec;
+    const vl = vadeAktif(), gec = vl.filter(x => x.gun < 0).length, yak = vl.length - gec;
     if (vl.length) toast((gec ? gec + " faturanın vadesi geçti" : "") + (gec && yak ? ", " : "") + (yak ? yak + " faturanın vadesi yaklaşıyor" : "") + " · Özet > Yapılacaklar");
   } catch (e) {
     document.getElementById("main").innerHTML = '<div class="panel"><div class="empty"><strong>Kayıtlar yüklenemedi</strong>' + esc(e.message) + "</div></div>";

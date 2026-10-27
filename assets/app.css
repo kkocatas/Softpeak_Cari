@@ -301,3 +301,14 @@ tr.flash td{animation:flash 1.6s ease-out}
 .f.chk{flex-direction:row;align-items:center;gap:8px}
 body.surukle::after{content:"Fatura dosyalarını bırakın — okunup arşive eklenecek (PDF, e-Fatura zip / XML)";position:fixed;inset:12px;border:3px dashed var(--accent);border-radius:12px;background:color-mix(in srgb,var(--bg) 82%,transparent);display:flex;align-items:center;justify-content:center;font-family:var(--f-display);font-size:20px;font-weight:700;color:var(--accent);z-index:50;pointer-events:none;text-align:center;padding:20px}
 @media print{.fb-sag,.panel.yap{display:none}}
+/* sürüm 22: yapılacaklar aç/kapa, satır kaldırma */
+.yap-bas{all:unset;cursor:pointer;display:flex;align-items:center;gap:8px}
+.yap-bas .caret{display:inline-block;color:var(--muted);transition:transform .15s;font-size:12px}
+.yap-bas[aria-expanded="true"] .caret{transform:rotate(90deg);color:var(--accent)}
+.yap-bas .cnt.uyari{font-family:var(--f-num);font-size:11px;background:var(--debit);color:var(--surface);border-radius:9px;padding:0 7px;line-height:18px}
+.yap-bas:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+.panel.yap.kapali{padding-bottom:6px}
+.panel.yap.kapali .panel-head{margin-bottom:0}
+.yap-sil{color:var(--muted);padding:2px 6px}
+.yap-sil:hover{color:var(--debit)}
+.btn.ghost.sil{color:var(--debit)}

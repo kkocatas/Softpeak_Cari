@@ -80,6 +80,10 @@ Giriş adresi: `https://ALANADINIZ.com/cari/`
 - **Yazdırma:** Her listede ve cari ekstresinde "Yazdır" düğmesi var; PDF'ler "Aç / yazdır" ile tarayıcıda açılır.
 - **İşlem kaydı:** Ayarlar ekranında kimin neyi ne zaman eklediği, değiştirdiği, sildiği görünür.
 
+## Güncelleme
+
+Yeni sürüm zip'ini **Ayarlar > Uygulama güncelleme** bölümünden yükleyin; sunucu paneline girmek gerekmez. Yalnızca uygulama dosyaları (index.php, api.php, assets, lib) değişir; config.php, setup.php, kök .htaccess / web.config, kayıtlar ve fatura belgeleri olduğu gibi kalır. Mevcut sürümün dosyaları PDF klasöründeki `_guncelleme` içine zip olarak saklanır. Daha eski bir sürüm yüklenemez.
+
 ## Yedekleme
 
 Ayarlar > **Yedekleme > Tam yedeği indir**: veritabanının tamamı (veritabani.sql) ve tüm fatura belgeleri tek zip dosyası olarak iner (sunucuda PHP zip eklentisi gerekir). Geri yüklemek için: boş veritabanında phpMyAdmin > İçe aktar ile veritabani.sql, ardından belgeler klasörünün içeriğini PDF klasörüne kopyalayın.

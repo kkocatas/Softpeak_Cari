@@ -289,6 +289,59 @@ function send_sandboxed_html(string $html): void {
     header('Cache-Control: private, no-store');
     echo $html;
 }
+/** Güncelleme zip'ini doğrular, mevcut dosyaların yedeğini alır ve yeni dosyaları yazar. */
+function guncelleme_kur(string $zipYol): array {
+    $z = new ZipArchive();
+    if ($z->open($zipYol) !== true) fail('Dosya geçerli bir zip değil.');
+    $adlar = [];
+    for ($i = 0; $i < $z->numFiles; $i++) { $n = str_replace('\\', '/', (string)$z->getNameIndex($i)); if (!str_ends_with($n, '/')) $adlar[$i] = $n; }
+    // Zip tek bir klasörle başlıyorsa (ör. softpeak-cari/index.php) o klasörü at.
+    $onek = '';
+    if (!in_array('index.php', $adlar, true)) {
+        foreach ($adlar as $n) if (preg_match('#^([^/]+/)index\.php$#', $n, $m)) { $onek = $m[1]; break; }
+    }
+    $izin = '#^(index\.php|api\.php|README\.md|assets/[A-Za-z0-9_./-]+\.(js|css|txt|md|png|svg|webp|woff2?)|lib/(bootstrap\.php|schema\.sql|\.htaccess|[A-Za-z0-9_-]+\.php))$#';
+    $yaz = [];
+    foreach ($adlar as $i => $n) {
+        if ($onek !== '') { if (!str_starts_with($n, $onek)) continue; $n = substr($n, strlen($onek)); }
+        if ($n === '' || str_contains($n, '..') || str_starts_with($n, '/')) continue;
+        if (!preg_match($izin, $n)) continue; // config.php, setup.php, kök .htaccess/web.config vb. atlanır
+        $yaz[$n] = $i;
+    }
+    foreach (['index.php', 'api.php', 'assets/app.js', 'lib/bootstrap.php'] as $zorunlu) if (!isset($yaz[$zorunlu])) fail('Bu zip bir Cari Takip güncellemesi değil (' . $zorunlu . ' yok).');
+    $yeniIndex = (string)$z->getFromIndex($yaz['index.php']);
+    if (!preg_match("/\\\$v = '(\\d+)';/", $yeniIndex, $m)) fail('Güncellemenin sürümü okunamadı.');
+    $yeniSurum = (int)$m[1];
+    $kok = __DIR__;
+    $mevcut = preg_match("/\\\$v = '(\\d+)';/", (string)@file_get_contents($kok . '/index.php'), $mm) ? (int)$mm[1] : 0;
+    if ($yeniSurum < $mevcut) fail("Bu paket daha eski bir sürüm ($yeniSurum); kurulu sürüm $mevcut.");
+    // Mevcut dosyaların yedeği (geri dönüş için), dışarıdan erişilemeyen arşiv klasörüne
+    $yd = pdf_root() . '/_guncelleme';
+    if (!is_dir($yd) && !@mkdir($yd, 0750, true)) fail('Yedek klasörü oluşturulamadı.', 500);
+    $yz = new ZipArchive();
+    if ($yz->open("$yd/onceki-surum-$mevcut-" . date('Ymd-His') . '.zip', ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
+        foreach (array_keys($yaz) as $n) if (is_file("$kok/$n")) $yz->addFile("$kok/$n", $n);
+        $yz->close();
+    }
+    // Önce hepsi okunur, sonra yazılır (yarım kalma riskini azaltır)
+    $icerik = [];
+    foreach ($yaz as $n => $i) { $c = $z->getFromIndex($i); if ($c === false) fail("$n okunamadı."); $icerik[$n] = $c; }
+    $z->close();
+    $hata = [];
+    foreach ($icerik as $n => $c) {
+        $hedef = "$kok/$n"; $dir = dirname($hedef);
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true)) { $hata[] = $n; continue; }
+        if (@file_put_contents($hedef . '.yeni', $c, LOCK_EX) === false || !@rename($hedef . '.yeni', $hedef)) {
+            @unlink($hedef . '.yeni');
+            if (@file_put_contents($hedef, $c, LOCK_EX) === false) $hata[] = $n;
+        }
+    }
+    if (function_exists('opcache_reset')) @opcache_reset();
+    unset($_SESSION['schema']);
+    audit('ayarlar', null, 'guncelle', ['surum' => $mevcut], ['surum' => $yeniSurum, 'dosya' => count($icerik), 'hata' => $hata]);
+    if ($hata) fail('Bazı dosyalar yazılamadı (klasör yazma izni?): ' . implode(', ', $hata) . '. Önceki sürümün yedeği PDF klasöründeki _guncelleme içinde.', 500);
+    return ['ok' => true, 'onceki' => $mevcut, 'surum' => $yeniSurum, 'dosya' => count($icerik)];
+}
 /** Tüm tabloların yapısı ve kayıtları (phpMyAdmin ile içe aktarılabilir SQL). */
 function sql_dump(): string {
     $pdo = db();
@@ -525,6 +578,26 @@ switch ($a) {
         header('Cache-Control: private, no-store');
         readfile($tmp); @unlink($tmp);
         exit;
+
+    case 'yap_gizle':
+        // Özet > Yapılacaklar listesinden kaldırılan satırlar (yalnızca listeden gizlenir, kayıt silinmez)
+        $needAdmin();
+        $l = body()['liste'] ?? [];
+        if (!is_array($l)) fail('Geçersiz liste.');
+        $l = array_values(array_unique(array_filter(array_map(fn($x) => is_string($x) ? substr($x, 0, 80) : '', $l), fn($x) => preg_match('/^[a-z]+:[A-Za-z0-9:_-]*$/', $x))));
+        $l = array_slice($l, -500);
+        ayar_yaz('yap_gizli', json_encode($l));
+        out(['ok' => true, 'yap_gizli' => json_encode($l)]);
+
+    case 'guncelle':
+        // Uygulama güncellemesi: yönetici zip yükler, izin verilen dosyalar yerine yazılır.
+        // config.php, setup.php, kök .htaccess / web.config ve PDF arşivi asla değişmez.
+        $needAdmin();
+        if (!class_exists('ZipArchive')) fail('Sunucuda PHP zip eklentisi kapalı; güncelleme yüklenemiyor.', 500);
+        $f = $_FILES['paket'] ?? [];
+        if ($err = upload_error($f)) fail(str_replace('PDF dosyası', 'Güncelleme dosyası', $err));
+        if (!is_uploaded_file($f['tmp_name'])) fail('Dosya yüklenemedi.');
+        out(guncelleme_kur($f['tmp_name']));
 
     case 'logo_yukle':
         $needAdmin();
