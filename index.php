@@ -7,7 +7,7 @@ header('Cache-Control: no-store');
 $user = null;
 try { $user = current_user(); }
 catch (Throwable $t) { http_response_code(500); exit('Veritabanına bağlanılamadı. config.php ayarlarını kontrol edin veya setup.php ile kurulumu tamamlayın.'); }
-$v = '22';
+$v = '24';
 $marka = 'Cari Takip'; $logo = null; $logoKoyu = 'normal';
 try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logoKoyu = ayar('logo_koyu') ?: 'normal'; } catch (Throwable $t) { /* ayarlar okunamazsa varsayılan ad */ }
 ?><!doctype html>
@@ -18,9 +18,6 @@ try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logo
 <meta name="robots" content="noindex,nofollow">
 <title><?= e($marka) ?></title>
 <?php if ($logo): ?><link rel="icon" href="<?= e($logo) ?>"><?php endif; ?>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/app.css?v=<?= $v ?>">
 <script>try{var t=localStorage.getItem("cari-tema");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 </head>
@@ -60,7 +57,7 @@ document.getElementById('login').addEventListener('submit', async e => {
     <div class="brand" id="brand"><?= marka_html() ?><small><?= e($marka) ?> · sürüm <?= $v ?></small></div>
     <nav class="nav" id="nav"></nav>
     <div class="who">
-      <span><?= e($user['ad']) ?><br><span class="muted small"><?= $user['rol'] === 'admin' ? 'Yönetici' : 'Salt okunur' ?></span></span>
+      <span class="av" aria-hidden="true"><?= e(mb_strtoupper(mb_substr(trim((string)$user['ad']) ?: (string)$user['kullanici'], 0, 1))) ?></span><span><?= e($user['ad']) ?><br><span class="muted small"><?= $user['rol'] === 'admin' ? 'Yönetici' : 'Salt okunur' ?></span></span>
       <button class="btn ghost" id="logout">Çıkış</button>
     </div>
   </aside>
