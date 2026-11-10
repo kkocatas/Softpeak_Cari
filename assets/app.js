@@ -485,7 +485,8 @@ function projeOzet(p) {
   const kes = fs.filter(f => f.tur === "kesilen"), net = kes.reduce((s, f) => s + calcF(f).net, 0);
   const tah = r2(kes.reduce((s, f) => s + Math.min(odenenF(f.id), calcF(f).net), 0) + hs.filter(x => x.tur === "tahsilat").reduce((s, x) => s + bosH(x), 0));
   const fatB = fs.filter(f => f.tur === "kesilen").reduce((s, f) => s + calcF(f).brut, 0), giderB = fs.filter(f => f.tur === "gelen").reduce((s, f) => s + calcF(f).brut, 0);
-  return { fat, gider, tah, net, fatB, giderB, kalan: r2(net - tah), bedel: num(p.bedel), bedelB: r2(num(p.bedel) * (1 + vKdv() / 100)) };
+  const tev = kes.reduce((s, f) => s + calcF(f).tevkif + calcF(f).stopaj, 0);
+  return { fat, gider, tah, net, fatB, giderB, tev, kalan: r2(net - tah), bedel: num(p.bedel), bedelB: r2(num(p.bedel) * (1 + vKdv() / 100)) };
 }
 function durumChip(d) { return { devam: '<span class="chip out">Devam ediyor</span>', tamam: '<span class="chip ok">Tamamlandı</span>', teklif: '<span class="chip no">Teklif</span>', iptal: '<span class="chip mute">İptal</span>' }[d] || '<span class="chip out">Devam ediyor</span>'; }
 function vProjeList() {
@@ -501,12 +502,31 @@ function vProjeList() {
   });
   return h + "</div>";
 }
+/* Projenin faturaları tek tabloda: KDV hariç, KDV, KDV dahil, tevkifat, ödenecek/tahsil edilecek, ödenen, kalan */
+function projeDokum(id) {
+  const fs = S.data.faturalar.filter(f => f.projeId === id).sort((a, b) => (a.tarih || "").localeCompare(b.tarih || ""));
+  if (!fs.length) return "";
+  const grup = (tur, baslik, odeAd) => {
+    const xs = fs.filter(f => f.tur === tur); if (!xs.length) return "";
+    const T = { m: 0, k: 0, b: 0, t: 0, n: 0, o: 0 };
+    let r = '<tr class="dk-baslik"><td colspan="10">' + baslik + "</td></tr>";
+    xs.forEach(f => {
+      const c = calcF(f), o = Math.min(odenenF(f.id), c.net), tv = r2(c.tevkif + c.stopaj);
+      T.m += c.matrah; T.k += c.kdv; T.b += c.brut; T.t += tv; T.n += c.net; T.o += o;
+      r += '<tr class="click" data-gitfat="' + f.id + '"><td>' + fd(f.tarih) + "</td><td>" + esc(f.no || "—") + '<div class="small muted">' + esc(cariAd(f.cariId)) + '</div></td><td class="num">' + tl(c.matrah) + '</td><td class="num">' + tl(c.kdv) + '<div class="small muted">%' + num(f.kdvOran) + '</div></td><td class="num">' + tl(c.brut) + '</td><td class="num">' + (tv ? "−" + tl(tv) + '<div class="small muted">' + (c.tevkif ? num(f.tevkifat) + "/10" : "") + (c.stopaj ? (c.tevkif ? " · " : "") + "stopaj" : "") + "</div>" : "—") + '</td><td class="num"><b>' + tl(c.net) + '</b></td><td class="num">' + (o > 0.004 ? tl(o) : "—") + '</td><td class="num">' + (c.net - o > 0.004 ? "<b>" + tl(c.net - o) + "</b>" : "—") + "</td><td>" + durumChipF(f) + "</td></tr>";
+    });
+    return r + '<tr class="dk-toplam"><td colspan="2">Toplam ' + xs.length + ' fatura</td><td class="num">' + tl(T.m) + '</td><td class="num">' + tl(T.k) + '</td><td class="num">' + tl(T.b) + '</td><td class="num">' + (T.t ? "−" + tl(T.t) : "—") + '</td><td class="num">' + tl(T.n) + '</td><td class="num">' + tl(T.o) + '</td><td class="num">' + tl(T.n - T.o) + "</td><td></td></tr>";
+  };
+  return '<div class="panel"><div class="panel-head"><h2>Fatura dökümü</h2><span class="small muted">KDV dahil − tevkifat = ödenecek / tahsil edilecek tutar; ödemeler ve kalan bu tutar üzerinden</span></div><div class="tw"><table class="dokum"><thead><tr><th>Tarih</th><th>Fatura</th><th class="num">KDV hariç</th><th class="num">KDV</th><th class="num">KDV dahil</th><th class="num">Tevkifat</th><th class="num">Tahsil / ödenecek</th><th class="num">Ödenen</th><th class="num">Kalan</th><th>Durum</th></tr></thead><tbody>' +
+    grup("kesilen", "Müşteriye kesilen faturalar", "Tahsil edilen") + grup("gelen", "Personelden gelen faturalar (gider)", "Ödenen") + "</tbody></table></div></div>";
+}
 function vProje(id) {
   const p = proje(id); if (!p) { S.detail = null; return vProjeList(); }
   const o = projeOzet(p);
   let h = printHead("Proje · " + p.ad) + '<button class="back" data-nav="proje">← Projeler</button><div class="top"><div><h1>' + esc(p.ad) + '</h1><div class="meta"><span>' + esc(cariAd(p.musteriId)) + "</span>" + (p.baslangic ? "<span>Başlangıç " + fd(p.baslangic) + "</span>" : "") + (p.bitis ? "<span>Teslim " + fd(p.bitis) + "</span>" : "") + durumChip(p.durum) + "</div></div>" +
     '<div class="actions"><button class="btn" data-act="print">Yazdır</button>' + (S.canWrite ? '<button class="btn" data-act="edit-proje" data-id="' + id + '">Düzenle</button><button class="btn" data-act="new-hareket" data-proje="' + id + '">+ Tahsilat</button><button class="btn primary" data-act="new-fatura" data-proje="' + id + '">+ Fatura</button>' : "") + "</div></div>";
-  h += '<div class="kpis">' + kpi("Proje bedeli", o.bedel ? tl(o.bedel) : "—", o.bedel ? "KDV hariç · KDV dahil " + tl(o.bedelB) + " (%" + vKdv() + ")" : "KDV hariç") + kpi("Faturalanan", tl(o.fat), "KDV dahil " + tl(o.fatB) + (o.bedel ? " · kalan " + tl(o.bedel - o.fat) : "")) + kpi("Tahsil edilen", tl(o.tah), "KDV dahil · açık " + tl(o.kalan)) + kpi("Proje marjı", tl(o.fat - o.gider), "KDV dahil " + tl(o.fatB - o.giderB) + " · gider " + tl(o.gider)) + "</div>";
+  h += '<div class="kpis">' + kpi("Proje bedeli", o.bedel ? tl(o.bedel) : "—", o.bedel ? "KDV hariç · KDV dahil " + tl(o.bedelB) + " (%" + vKdv() + ")" : "KDV hariç") + kpi("Faturalanan", tl(o.fat), "KDV hariç · KDV dahil " + tl(o.fatB) + (o.tev ? " · tevkifat −" + tl(o.tev) : "") + (o.bedel ? (o.bedel - o.fat >= -0.004 ? " · faturalanmayan " + tl(o.bedel - o.fat) : " · bedeli " + tl(o.fat - o.bedel) + " aşıyor") : "")) + kpi("Tahsil edilen", tl(o.tah), (o.tev ? "Tevkifat düşülmüş, KDV dahil" : "KDV dahil") + " · tahsil edilecek " + tl(o.net) + " · açık " + tl(o.kalan)) + kpi("Proje marjı", tl(o.fat - o.gider), "KDV hariç · faturalanan " + tl(o.fat) + " − gider " + tl(o.gider)) + "</div>";
+  h += projeDokum(id);
   if (p.aciklama) h += '<div class="panel small">' + esc(p.aciklama) + "</div>";
   // Müşteri tarafı (kesilen fatura / tahsilat) ile gider tarafı (personel faturası / ödeme) ayrı tablolarda; bakiyeler birbirine karışmaz.
   const tum = movements(null, id), ayir = musteri => { let run = 0; return tum.filter(r => r.kind === "fatura" ? (r.rec.tur === "kesilen") === musteri : (r.rec.tur === "tahsilat") === musteri).map(r => { run = r2(run + r.borc - r.alacak); return Object.assign({}, r, { bakiye: run }); }); };
