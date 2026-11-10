@@ -508,7 +508,11 @@ function vProje(id) {
     '<div class="actions"><button class="btn" data-act="print">Yazdır</button>' + (S.canWrite ? '<button class="btn" data-act="edit-proje" data-id="' + id + '">Düzenle</button><button class="btn" data-act="new-hareket" data-proje="' + id + '">+ Tahsilat</button><button class="btn primary" data-act="new-fatura" data-proje="' + id + '">+ Fatura</button>' : "") + "</div></div>";
   h += '<div class="kpis">' + kpi("Proje bedeli", o.bedel ? tl(o.bedel) : "—", o.bedel ? "KDV hariç · KDV dahil " + tl(o.bedelB) + " (%" + vKdv() + ")" : "KDV hariç") + kpi("Faturalanan", tl(o.fat), "KDV dahil " + tl(o.fatB) + (o.bedel ? " · kalan " + tl(o.bedel - o.fat) : "")) + kpi("Tahsil edilen", tl(o.tah), "KDV dahil · açık " + tl(o.kalan)) + kpi("Proje marjı", tl(o.fat - o.gider), "KDV dahil " + tl(o.fatB - o.giderB) + " · gider " + tl(o.gider)) + "</div>";
   if (p.aciklama) h += '<div class="panel small">' + esc(p.aciklama) + "</div>";
-  return h + '<div class="panel"><div class="panel-head"><h2>Proje hareketleri</h2></div>' + ekstreTable(movements(null, id), true) + "</div>";
+  // Müşteri tarafı (kesilen fatura / tahsilat) ile gider tarafı (personel faturası / ödeme) ayrı tablolarda; bakiyeler birbirine karışmaz.
+  const tum = movements(null, id), ayir = musteri => { let run = 0; return tum.filter(r => r.kind === "fatura" ? (r.rec.tur === "kesilen") === musteri : (r.rec.tur === "tahsilat") === musteri).map(r => { run = r2(run + r.borc - r.alacak); return Object.assign({}, r, { bakiye: run }); }); };
+  const mR = ayir(true), gR = ayir(false);
+  h += '<div class="panel"><div class="panel-head"><h2>Müşteri: faturalar ve tahsilatlar</h2><span class="small muted">Bakiye: müşteriden tahsil edilecek kalan</span></div>' + (mR.length ? ekstreTable(mR, true) : '<div class="empty small">Bu projeye kesilmiş fatura yok.</div>') + "</div>";
+  return h + '<div class="panel"><div class="panel-head"><h2>Giderler: personel faturaları ve ödemeler</h2><span class="small muted">Bakiye: personele ödenecek kalan</span></div>' + (gR.length ? ekstreTable(gR, true) : '<div class="empty small">Bu projeye bağlı gider faturası yok.</div>') + "</div>";
 }
 
 function filteredFaturalar() {
