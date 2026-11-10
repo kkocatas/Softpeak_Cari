@@ -71,9 +71,14 @@ function movements(cariId, projeId) {
     rows.push({ tarih: f.tarih, kind: "fatura", rec: f, tur: f.tur === "kesilen" ? "Kesilen fatura" : "Gelen fatura", belge: f.no || "", acik: f.aciklama || "", borc: f.tur === "kesilen" ? c.net : 0, alacak: f.tur === "gelen" ? c.net : 0 });
   });
   S.data.hareketler.forEach(h => {
-    if ((cariId && h.cariId !== cariId) || (projeId && h.projeId !== projeId)) return;
-    const t = num(h.tutar);
-    rows.push({ tarih: h.tarih, kind: "hareket", rec: h, tur: h.tur === "tahsilat" ? "Tahsilat" : "Ödeme", belge: h.yontem || "", acik: h.aciklama || "", borc: h.tur === "odeme" ? t : 0, alacak: h.tur === "tahsilat" ? t : 0 });
+    if (cariId && h.cariId !== cariId) return;
+    let t = num(h.tutar), kisim = false;
+    // Projede: projeye bağlı ödemeler ile projenin faturalarına dağıtılmış ödemeler (ödeme kaydında proje seçilmemiş olsa da)
+    if (projeId && h.projeId !== projeId) {
+      t = r2(dagH(h.id).filter(d => { const f = S.data.faturalar.find(x => x.id === d.faturaId); return f && f.projeId === projeId; }).reduce((s, d) => s + num(d.tutar), 0));
+      if (t <= 0.004) return; kisim = t < num(h.tutar) - 0.004;
+    }
+    rows.push({ tarih: h.tarih, kind: "hareket", rec: h, tur: h.tur === "tahsilat" ? "Tahsilat" : "Ödeme", belge: h.yontem || "", acik: (h.aciklama || "") + (kisim ? (h.aciklama ? " · " : "") + "toplam " + tl(num(h.tutar)) + ", bu projeye düşen kısım" : ""), borc: h.tur === "odeme" ? t : 0, alacak: h.tur === "tahsilat" ? t : 0 });
   });
   rows.sort((a, b) => (a.tarih || "").localeCompare(b.tarih || "") || (a.kind === "fatura" ? -1 : 1));
   let run = 0; rows.forEach(r => { run = r2(run + r.borc - r.alacak); r.bakiye = run; });
@@ -476,7 +481,9 @@ function vCari(id) {
 function projeOzet(p) {
   const fs = S.data.faturalar.filter(f => f.projeId === p.id), hs = S.data.hareketler.filter(x => x.projeId === p.id);
   const fat = fs.filter(f => f.tur === "kesilen").reduce((s, f) => s + calcF(f).matrah, 0), gider = fs.filter(f => f.tur === "gelen").reduce((s, f) => s + calcF(f).matrah, 0);
-  const tah = hs.filter(x => x.tur === "tahsilat").reduce((s, x) => s + num(x.tutar), 0), net = fs.filter(f => f.tur === "kesilen").reduce((s, f) => s + calcF(f).net, 0);
+  // Tahsil edilen: projenin faturalarına dağıtılan tahsilatlar (ödeme kaydında proje seçilmemiş olsa da) + projeye bağlı ama faturaya dağıtılmamış tahsilatlar
+  const kes = fs.filter(f => f.tur === "kesilen"), net = kes.reduce((s, f) => s + calcF(f).net, 0);
+  const tah = r2(kes.reduce((s, f) => s + Math.min(odenenF(f.id), calcF(f).net), 0) + hs.filter(x => x.tur === "tahsilat").reduce((s, x) => s + bosH(x), 0));
   const fatB = fs.filter(f => f.tur === "kesilen").reduce((s, f) => s + calcF(f).brut, 0), giderB = fs.filter(f => f.tur === "gelen").reduce((s, f) => s + calcF(f).brut, 0);
   return { fat, gider, tah, net, fatB, giderB, kalan: r2(net - tah), bedel: num(p.bedel), bedelB: r2(num(p.bedel) * (1 + vKdv() / 100)) };
 }
