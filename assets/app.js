@@ -212,6 +212,8 @@ const IKON = {
   ara: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
   gunes: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
   ay: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  daha: '<circle cx="5.5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor"/>',
+  telefon: '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/>',
 };
 function ic(k) { return '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + (IKON[k] || "") + "</svg>"; }
 
@@ -228,6 +230,51 @@ function renderNav() {
   const uyari = { ozet: S.loaded ? vadeAktif().length : 0, odenecek: S.loaded ? odenecekler().filter(x => x.d === "tahsil").length : 0 };
   document.getElementById("nav").innerHTML = navItems().map(([k, l]) => (k === "rapor" || k === "ayar" ? '<div class="nav-ayrac" role="presentation"></div>' : "") + '<button data-nav="' + k + '" aria-current="' + (S.view === k) + '">' + ic(k) + '<span class="nl">' + l + "</span>" + (uyari[k] ? '<span class="cnt uyari" title="' + (k === "ozet" ? "Vadesi geçen / yaklaşan fatura" : "Müşterisi ödedi, ödenebilir") + '">' + uyari[k] + "</span>" : counts[k] != null ? '<span class="cnt">' + counts[k] + "</span>" : "") + "</button>").join("") +
     '<button class="nav-logout" data-act="logout">' + ic("cikis") + '<span class="nl">Çıkış yap</span></button>';
+  // Telefonda alttaki sekme çubuğu
+  const ab = document.getElementById("altbar");
+  if (ab) {
+    const ana = [["ozet", "Özet"], ["personel", "Personel"], ["fatura", "Faturalar"], ["hareket", "Ödemeler"]], anada = ana.some(([k]) => k === S.view);
+    ab.innerHTML = ana.map(([k, l]) => '<button data-nav="' + k + '" aria-current="' + (S.view === k) + '">' + ic(k) + "<span>" + l + "</span>" + (uyari[k] ? '<span class="ab-n">' + uyari[k] + "</span>" : "") + "</button>").join("") +
+      '<button data-act="daha" aria-current="' + !anada + '">' + ic("daha") + "<span>Daha</span>" + (uyari.odenecek ? '<span class="ab-n">' + uyari.odenecek + "</span>" : "") + "</button>";
+  }
+}
+function dahaAc() {
+  let r = document.getElementById("ara-root");
+  if (!r) { r = document.createElement("div"); r.id = "ara-root"; document.body.appendChild(r); }
+  const uy = S.loaded ? odenecekler().filter(x => x.d === "tahsil").length : 0;
+  r.innerHTML = '<div class="overlay daha-ov" data-ara-bg="1"><div class="modal ara daha" role="dialog" aria-modal="true" aria-label="Tüm bölümler"><div class="daha-tutamak" aria-hidden="true"></div><div class="daha-grid">' +
+    navItems().map(([k, l]) => '<button data-nav="' + k + '" aria-current="' + (S.view === k) + '">' + ic(k) + "<span>" + l + "</span>" + (k === "odenecek" && uy ? '<span class="ab-n">' + uy + "</span>" : "") + "</button>").join("") +
+    '<button data-act="tema">' + ic(temaSimdi() === "dark" ? "gunes" : "ay") + "<span>" + (temaSimdi() === "dark" ? "Açık tema" : "Koyu tema") + '</span></button><button data-act="logout" class="daha-cikis">' + ic("cikis") + "<span>Çıkış yap</span></button></div></div></div>";
+}
+
+/* Telefonda tablolar kart olarak görünür: her hücreye sütun başlığı etiket olarak eklenir (CSS yalnız dar ekranda kullanır). */
+function kartEtiket() {
+  document.querySelectorAll("#main table").forEach(tb => {
+    if (tb.matches(".agr,.imp,.mini")) return;
+    const hs = [...tb.querySelectorAll("thead th")].map(th => th.textContent.trim()); if (!hs.length) return;
+    tb.classList.add("kart-tablo");
+    tb.querySelectorAll("tbody tr, tfoot tr").forEach(tr => {
+      let i = 0;
+      [...tr.children].forEach(td => { const cs = td.colSpan || 1; if (cs === 1 && hs[i] && !td.classList.contains("sel") && !td.hasAttribute("data-l")) td.setAttribute("data-l", hs[i]); i += cs; });
+    });
+  });
+}
+
+/* Telefona kurulum (ana ekrana ekle) */
+let kurIstem = null;
+addEventListener("beforeinstallprompt", e => { e.preventDefault(); kurIstem = e; if (S.loaded) render(); });
+addEventListener("appinstalled", () => { kurIstem = null; toast("Uygulama ana ekrana eklendi"); });
+function kuruluMu() { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
+function iosMu() { return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); }
+function kurulumYolu() {
+  if (kurIstem) return '<button class="btn primary sm" data-act="kur">' + ic("telefon") + "Ana ekrana ekle</button>";
+  if (iosMu()) return '<span class="small">Safari\'de alttaki <b>Paylaş</b> düğmesine, ardından <b>Ana Ekrana Ekle</b>\'ye dokunun.</span>';
+  return '<span class="small">Tarayıcı menüsünden (⋮) <b>Ana ekrana ekle</b> ya da <b>Uygulamayı yükle</b>\'yi seçin.</span>';
+}
+function kurulumKart() {
+  let gizli = false; try { gizli = localStorage.getItem("cari-kur-gizle") === "1"; } catch (e) {}
+  if (gizli || kuruluMu() || !matchMedia("(max-width: 720px), (pointer: coarse)").matches) return "";
+  return '<div class="kur-kart"><span class="kur-ik">' + ic("telefon") + '</span><div><b>Uygulamayı telefona kurun</b><div class="small muted">Ana ekrandan tek dokunuşla, tam ekran açılır.</div><div class="kur-yol">' + kurulumYolu() + '</div></div><button class="btn ghost sm yap-sil" data-act="kur-gizle" aria-label="Kapat">✕</button></div>';
 }
 
 /* ---------- görünümler ---------- */
@@ -305,6 +352,7 @@ function vOzet() {
   const satisB = fd_.filter(f => f.tur === "kesilen").reduce((s, f) => s + calcF(f).brut, 0), alisB = fd_.filter(f => f.tur === "gelen").reduce((s, f) => s + calcF(f).brut, 0);
   let h = printHead("Özet · " + ymLabel(d)) + '<div class="top"><div><h1>Özet</h1><div class="sub">' + ymLabel(d) + " dönemi · tutarlar KDV hariç, altında KDV dahil hali · bakiyeler KDV dahil ödenecek/tahsil edilecek tutar</div></div>" + topActions() + "</div>";
   if (!S.data.cariler.length && S.canWrite) h += '<div class="banner"><span><b>Başlarken:</b> önce müşterileri, sonra personeli ekleyin. Geçmiş faturalarınızı PDF arşiv yükle ekranından toplu aktarabilirsiniz.</span><button class="btn" data-nav="musteri">Müşteri ekle</button></div>';
+  h += kurulumKart();
   const OG = ozetGorselleri(d);
   h += '<div class="kpis">' + kpi("Müşterilerden alacak", tl(alacak), "Tahsil edilmemiş, KDV dahil", OG.tah) + kpi("Personele borç", tl(borc), "Ödenmemiş, KDV dahil", OG.ode) +
     kpi(ymLabel(d) + " kesilen", tl(satis), "KDV dahil " + tl(satisB) + " · " + fd_.filter(f => f.tur === "kesilen").length + " fatura", OG.kes) + kpi(ymLabel(d) + " marj", tl(satis - alis), "KDV dahil " + tl(satisB - alisB) + " · gelen " + tl(alis) + " (KDV dahil " + tl(alisB) + ")", OG.marj) + "</div>";
@@ -860,6 +908,7 @@ async function saveImports() {
 /* ---------- ayarlar ---------- */
 function vAyar() {
   let h = '<div class="top"><div><h1>Ayarlar</h1><div class="sub">' + esc(S.me.ad) + " · " + (S.canWrite ? "Yönetici" : "Salt okunur") + '</div></div><div class="actions"><button class="btn" data-act="logout">Çıkış yap</button></div></div>';
+  h += kuruluMu() ? "" : '<div class="panel"><div class="panel-head"><h2>Telefona kur</h2></div><p class="small" style="margin:0 0 12px">Uygulamayı telefonunuzun ana ekranına ekleyin; kendi ikonuyla tam ekran açılır. Kayıtlar yine sunucuda tutulur, telefonda saklanmaz. Logo yüklediyseniz ikon olarak logonuz görünür.</p>' + kurulumYolu() + "</div>";
   if (S.canWrite) h += firmaPanel() + '<div class="panel"><div class="panel-head"><h2>Yedekleme</h2><span class="small muted">' + (S.ay.son_yedek ? "Son yedek: " + esc(S.ay.son_yedek) : "Henüz yedek alınmadı") + '</span></div><p class="small" style="margin:0 0 12px">Veritabanının tamamı (SQL) ve tüm fatura belgeleri tek zip dosyası olarak bilgisayarınıza iner. Ayda en az bir kez alıp sunucu dışında saklayın; 30 günü geçince Özet\'te hatırlatılır.</p><button class="btn primary" data-act="yedek">Tam yedeği indir</button></div>' +
     '<div class="panel"><div class="panel-head"><h2>Uygulama güncelleme</h2><span class="small muted">Kurulu sürüm ' + esc(String(window.CARI_SURUM || "")) + '</span></div><p class="small" style="margin:0 0 12px">Size gönderilen güncelleme zip dosyasını buradan yükleyin; sunucu paneline girmeniz gerekmez. Veritabanı ayarları (config.php), kayıtlarınız ve fatura belgeleri değişmez. Mevcut sürümün yedeği otomatik alınır.</p>' +
     (S.guncelleniyor ? '<span class="small">Güncelleme yükleniyor…</span>' : '<label class="btn" for="a-guncelle">Güncelleme zip\'i seç ve yükle</label>') + '<input type="file" id="a-guncelle" accept=".zip,application/zip" hidden></div>';
@@ -934,6 +983,7 @@ function render() {
   else if (S.detail && S.detail.type === "proje") h = vProje(S.detail.id);
   else h = ({ ozet: vOzet, personel: () => vCariList("personel"), musteri: () => vCariList("musteri"), proje: vProjeList, fatura: vFatura, hareket: vHareket, odenecek: vOdenecek, arsiv: vArsiv, rapor: vRapor, agrapor: vAgRapor, ayar: vAyar }[S.view] || vOzet)();
   m.innerHTML = firmaBar() + h;
+  kartEtiket();
   if (!S.nabizBitti) { S.nabizBitti = true; document.body.classList.add("nabiz"); setTimeout(() => document.body.classList.remove("nabiz"), 2800); }
   if (aid) { const el = document.getElementById(aid); if (el && el.closest("#main") && el.type !== "file") { el.focus(); try { if (sel != null) el.setSelectionRange(sel, sel); } catch (e) {} } }
 }
@@ -1669,7 +1719,7 @@ document.addEventListener("click", e => {
   if (t.dataset.yap) { S.yapAcik[t.dataset.yap] = !S.yapAcik[t.dataset.yap]; render(); return; }
   if (t.dataset.ofiltre) { S.oFiltre = t.dataset.ofiltre; render(); return; }
   if (t.tagName === "A" && t.dataset.act) e.preventDefault();
-  if (t.dataset.nav) { S.view = t.dataset.nav; S.detail = null; if (S.view === "ayar") loadAyar(); render(); window.scrollTo(0, 0); return; }
+  if (t.dataset.nav) { araKapat(); S.view = t.dataset.nav; S.detail = null; if (S.view === "ayar") loadAyar(); render(); window.scrollTo(0, 0); return; }
   if (t.dataset.open) { S.detail = { type: "cari", id: t.dataset.open }; S.view = (cari(t.dataset.open) || {}).tip === "personel" ? "personel" : "musteri"; render(); window.scrollTo(0, 0); return; }
   if (t.dataset.proje) { S.detail = { type: "proje", id: t.dataset.proje }; S.view = "proje"; render(); window.scrollTo(0, 0); return; }
   if (t.dataset.edit) { const [k, id] = t.dataset.edit.split(":"); const rec = S.data[k === "fatura" ? "faturalar" : "hareketler"].find(x => x.id === id); if (rec) openModal(k, rec); return; }
@@ -1696,9 +1746,12 @@ document.addEventListener("click", e => {
   const a = t.dataset.act;
   if (a === "new-fatura") openModal("fatura", null, { cariId: t.dataset.cari, projeId: t.dataset.proje, personelId: t.dataset.personel, donem: t.dataset.fdonem, tur: t.dataset.personel ? "kesilen" : undefined });
   else if (a === "ara") araAc();
+  else if (a === "daha") dahaAc();
+  else if (a === "kur" && kurIstem) { kurIstem.prompt(); kurIstem.userChoice.finally(() => { kurIstem = null; render(); }); }
+  else if (a === "kur-gizle") { try { localStorage.setItem("cari-kur-gizle", "1"); } catch (e) {} render(); }
   else if (a === "yap-ac") { S.yapKapali = !S.yapKapali; try { localStorage.setItem("cari-yap-kapali", S.yapKapali ? "1" : "0"); } catch (e) {} render(); }
   else if (a === "yap-geri") yapGizle(null);
-  else if (a === "tema") temaDegistir();
+  else if (a === "tema") { araKapat(); temaDegistir(); }
   else if (a === "yedek") yedekIndir(t);
   else if (a === "paket") paketModal();
   else if (a === "ode-temizle") { S.selOde.clear(); render(); }
@@ -1757,6 +1810,7 @@ document.addEventListener("submit", async e => {
   }
 });
 document.addEventListener("keydown", e => {
+  if (!S.ara && e.key === "Escape" && document.getElementById("ara-root") && document.getElementById("ara-root").innerHTML) { araKapat(); return; }
   if (S.ara) {
     const A = S.ara;
     if (e.key === "Escape") { e.preventDefault(); araKapat(); return; }

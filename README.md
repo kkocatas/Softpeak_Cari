@@ -76,6 +76,7 @@ Giriş adresi: `https://ALANADINIZ.com/cari/`
 - **Mali müşavir paketi:** Faturalar ekranında; seçilen ayın fatura belgeleri ve Excel listesi tek zip.
 - **Arama:** her ekranda Ctrl+K (veya /) ile cari, fatura no, açıklama veya tutar aranır.
 - **Sürükle-bırak:** fatura PDF / e-Fatura zip dosyaları herhangi bir ekrana bırakılabilir; açık bir fatura penceresine bırakılan tek dosya o faturaya eklenir.
+- **Telefon:** Uygulama telefona kurulabilir (PWA). Telefonda alt menü çubuğu çıkar, tablolar kart olarak görünür. Android'de Chrome menüsünden "Ana ekrana ekle / Uygulamayı yükle", iPhone'da Safari'de Paylaş → "Ana Ekrana Ekle". Logo yüklüyse ana ekran ikonu logodur (PHP GD eklentisi gerekir; yoksa varsayılan ikon). Kayıtlar telefonda saklanmaz; yalnızca uygulama dosyaları hızlı açılış için önbelleğe alınır. HTTPS gerekir.
 - **Tema:** üst çubuktaki düğmeyle açık / koyu tema; seçim tarayıcıda hatırlanır.
 - **Yazdırma:** Her listede ve cari ekstresinde "Yazdır" düğmesi var; PDF'ler "Aç / yazdır" ile tarayıcıda açılır.
 - **İşlem kaydı:** Ayarlar ekranında kimin neyi ne zaman eklediği, değiştirdiği, sildiği görünür.

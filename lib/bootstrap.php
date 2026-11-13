@@ -181,6 +181,8 @@ function ayarlar(): array {
     catch (Throwable $t) { /* tablo henüz yok: varsayılanlar */ }
     return $GLOBALS['__ayar_cache'] = $a;
 }
+/** Veritabanına ulaşılamasa da hata vermeyen ayar okuma (kurulum öncesi / herkese açık uçlar için). */
+function ayar_guvenli(string $k): string { try { return (string)ayar($k); } catch (Throwable $t) { return ''; } }
 function ayar(string $k): string { return (string)(ayarlar()[$k] ?? ''); }
 function ayar_yaz(string $k, string $v): void {
     db()->prepare('INSERT INTO ayarlar (anahtar, deger) VALUES (?, ?) ON DUPLICATE KEY UPDATE deger = VALUES(deger)')->execute([$k, $v]);

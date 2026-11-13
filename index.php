@@ -7,7 +7,7 @@ header('Cache-Control: no-store');
 $user = null;
 try { $user = current_user(); }
 catch (Throwable $t) { http_response_code(500); exit('Veritabanına bağlanılamadı. config.php ayarlarını kontrol edin veya setup.php ile kurulumu tamamlayın.'); }
-$v = '27';
+$v = '28';
 $marka = 'Cari Takip'; $logo = null; $logoKoyu = 'normal';
 try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logoKoyu = ayar('logo_koyu') ?: 'normal'; } catch (Throwable $t) { /* ayarlar okunamazsa varsayılan ad */ }
 ?><!doctype html>
@@ -18,6 +18,15 @@ try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logo
 <meta name="robots" content="noindex,nofollow">
 <title><?= e($marka) ?></title>
 <?php if ($logo): ?><link rel="icon" href="<?= e($logo) ?>"><?php endif; ?>
+<link rel="manifest" href="api.php?a=manifest">
+<meta name="theme-color" content="#f3f4f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c1018" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="<?= e(mb_substr(trim((string)ayar_guvenli('uygulama_ad')) ?: 'Cari', 0, 12)) ?>">
+<link rel="apple-touch-icon" href="api.php?a=ikon&amp;s=180&amp;v=<?= e(ayar_guvenli('logo_surum')) ?>">
+<script>if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) addEventListener("load", () => navigator.serviceWorker.register("api.php?a=sw", { scope: "./" }).catch(() => {}));</script>
 <link rel="stylesheet" href="assets/app.css?v=<?= $v ?>">
 <script>try{var t=localStorage.getItem("cari-tema");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 </head>
@@ -63,6 +72,7 @@ document.getElementById('login').addEventListener('submit', async e => {
   </aside>
   <main id="main"><div class="empty"><strong>Kayıtlar yükleniyor</strong></div></main>
 </div>
+<nav class="altbar" id="altbar" aria-label="Ana menü"></nav>
 <div id="modal-root"></div>
 <div id="toast-root"></div>
 <script>window.CARI_SURUM = <?= json_encode($v) ?>;</script>

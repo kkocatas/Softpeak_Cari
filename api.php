@@ -366,6 +366,81 @@ function remove_pdf_file(string $rel): void { if ($p = safe_pdf_path($rel)) @unl
 /* ---------- yönlendirme ---------- */
 $a = $_GET['a'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'];
+
+/* ---------- telefona kurulum (PWA): oturum istemez ---------- */
+if ($a === 'manifest') {
+    $ad = 'Cari Takip'; $kisa = 'Cari';
+    try { $ad = marka_ad(); $u = trim((string)ayar('uygulama_ad')); if ($u !== '') $kisa = mb_substr($u, 0, 12); } catch (Throwable $t) {}
+    $ikon = fn(int $s, string $amac = 'any') => ['src' => 'api.php?a=ikon&s=' . $s . ($amac === 'maskable' ? '&m=1' : '') . '&v=' . rawurlencode((string)(ayar_guvenli('logo_surum'))), 'sizes' => "{$s}x{$s}", 'type' => 'image/png', 'purpose' => $amac];
+    header('Content-Type: application/manifest+json; charset=utf-8');
+    header('Cache-Control: no-cache');
+    echo json_encode([
+        'name' => $ad, 'short_name' => $kisa, 'lang' => 'tr', 'dir' => 'ltr',
+        'start_url' => './', 'scope' => './', 'id' => './', 'display' => 'standalone', 'orientation' => 'any',
+        'background_color' => '#f3f4f7', 'theme_color' => '#2f56d6',
+        'description' => 'Fatura, ödeme ve cari hesap takibi',
+        'icons' => [$ikon(192), $ikon(512), $ikon(512, 'maskable')],
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+if ($a === 'ikon') {
+    // Ana ekran ikonu: firma logosu yüklüyse beyaz kare üzerinde logo, yoksa uygulamanın varsayılan ikonu.
+    $s = (int)($_GET['s'] ?? 192); $s = in_array($s, [180, 192, 512], true) ? $s : 192; $maskeli = !empty($_GET['m']);
+    $png = null;
+    try {
+        $l = db()->query("SELECT anahtar, deger FROM ayarlar WHERE anahtar IN ('logo_data','logo_mime')")->fetchAll(PDO::FETCH_KEY_PAIR);
+        $bin = isset($l['logo_data']) ? base64_decode($l['logo_data'], true) : false;
+        if ($bin && function_exists('imagecreatefromstring') && in_array($l['logo_mime'] ?? '', ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], true) && ($src = @imagecreatefromstring($bin))) {
+            $im = imagecreatetruecolor($s, $s);
+            imagefill($im, 0, 0, imagecolorallocate($im, 255, 255, 255));
+            imagealphablending($im, true);
+            $w = imagesx($src); $h = imagesy($src); $kutu = $s * ($maskeli || $s === 180 ? 0.62 : 0.76);
+            $k = min($kutu / max(1, $w), $kutu / max(1, $h)); $nw = (int)round($w * $k); $nh = (int)round($h * $k);
+            imagecopyresampled($im, $src, (int)(($s - $nw) / 2), (int)(($s - $nh) / 2), 0, 0, $nw, $nh, $w, $h);
+            ob_start(); imagepng($im); $png = ob_get_clean();
+        }
+    } catch (Throwable $t) { $png = null; }
+    if ($png === null) {
+        $dosya = __DIR__ . '/assets/icons/' . ($s === 180 ? 'apple-touch-icon.png' : ($maskeli ? 'icon-maskable-512.png' : "icon-$s.png"));
+        $png = (string)@file_get_contents($dosya);
+    }
+    header('Content-Type: image/png');
+    header('Content-Length: ' . strlen($png));
+    header('Cache-Control: public, max-age=86400');
+    echo $png; exit;
+}
+if ($a === 'sw') {
+    // Service worker: uygulama dosyalarını telefonda saklar (hızlı açılış); veriler her zaman sunucudan gelir, telefonda saklanmaz.
+    preg_match("/\\\$v = '(\\d+)';/", (string)@file_get_contents(__DIR__ . '/index.php'), $m);
+    $surum = $m[1] ?? '0';
+    header('Content-Type: application/javascript; charset=utf-8');
+    header('Cache-Control: no-cache');
+    header('Service-Worker-Allowed: ./');
+    echo str_replace('__SURUM__', $surum, <<<'JS'
+const ONBELLEK = "cari-__SURUM__";
+const KABUK = ["assets/app.css?v=__SURUM__", "assets/app.js?v=__SURUM__", "assets/icons/icon-192.png"];
+const CEVRIMDISI = '<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bağlantı yok</title>' +
+  '<body style="font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#f3f4f7;color:#18202e;text-align:center;padding:24px">' +
+  '<div><h1 style="font-size:22px;margin:0 0 8px">İnternet bağlantısı yok</h1><p style="color:#697386;margin:0 0 18px">Kayıtlar sunucuda tutulduğu için bağlantı gelince açılır.</p>' +
+  '<button onclick="location.reload()" style="font:inherit;padding:10px 18px;border:0;border-radius:10px;background:#2f56d6;color:#fff">Tekrar dene</button></div></body></html>';
+self.addEventListener("install", e => { e.waitUntil(caches.open(ONBELLEK).then(c => c.addAll(KABUK)).catch(() => {}).then(() => self.skipWaiting())); });
+self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith("cari-") && k !== ONBELLEK).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
+self.addEventListener("fetch", e => {
+  const r = e.request, u = new URL(r.url);
+  if (r.method !== "GET" || u.origin !== location.origin) return;
+  if (u.pathname.endsWith("/api.php")) return; // veriler ve belgeler: her zaman sunucudan
+  if (r.mode === "navigate") {
+    e.respondWith(fetch(r).catch(() => new Response(CEVRIMDISI, { headers: { "Content-Type": "text/html; charset=utf-8" } })));
+    return;
+  }
+  if (u.pathname.includes("/assets/")) {
+    e.respondWith(caches.open(ONBELLEK).then(c => c.match(r).then(hit => hit || fetch(r).then(res => { if (res.ok) c.put(r, res.clone()); return res; }))));
+  }
+});
+JS);
+    exit;
+}
+
 start_session();
 
 if ($method === 'POST') {
