@@ -86,7 +86,7 @@ function to_api(string $t, array $row): array {
             default => $v ?? '',
         };
     }
-    if ($t === 'faturalar') { $o['pdfAd'] = $row['pdf_ad'] ?? ''; $o['pdfBoyut'] = (int)($row['pdf_boyut'] ?? 0); $o['pdf'] = !empty($row['pdf_yol']); $o['belgeTur'] = $o['pdf'] ? strtolower(pathinfo((string)$row['pdf_yol'], PATHINFO_EXTENSION)) : ''; }
+    if ($t === 'faturalar') { $o['pdfAd'] = $row['pdf_ad'] ?? ''; $o['pdfBoyut'] = (int)($row['pdf_boyut'] ?? 0); $o['pdf'] = !empty($row['pdf_yol']); $o['belgeTur'] = $o['pdf'] ? strtolower(pathinfo((string)$row['pdf_yol'], PATHINFO_EXTENSION)) : ''; $o['kaynak'] = $row['kaynak'] ?? ''; }
     $o['guncelleme'] = $row['guncelleme'] ?? '';
     return $o;
 }
@@ -342,6 +342,161 @@ function guncelleme_kur(string $zipYol): array {
     if ($hata) fail('Bazı dosyalar yazılamadı (klasör yazma izni?): ' . implode(', ', $hata) . '. Önceki sürümün yedeği PDF klasöründeki _guncelleme içinde.', 500);
     return ['ok' => true, 'onceki' => $mevcut, 'surum' => $yeniSurum, 'dosya' => count($icerik)];
 }
+/* ---------- sözleşme ve belge ekleri (müşteri, personel, proje) ---------- */
+const BELGE_TUR = ['pdf' => 'application/pdf', 'doc' => 'application/msword', 'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls' => 'application/vnd.ms-excel', 'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'ppt' => 'application/vnd.ms-powerpoint',
+    'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'odt' => 'application/vnd.oasis.opendocument.text',
+    'ods' => 'application/vnd.oasis.opendocument.spreadsheet', 'odp' => 'application/vnd.oasis.opendocument.presentation', 'rtf' => 'application/rtf',
+    'txt' => 'text/plain', 'csv' => 'text/csv', 'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg'];
+function belge_api(array $r): array {
+    return ['id' => (string)$r['id'], 'sahipTur' => $r['sahip_tur'], 'sahipId' => (string)$r['sahip_id'], 'ad' => $r['ad'], 'aciklama' => $r['aciklama'],
+        'tur' => strtolower(pathinfo((string)$r['dosya_yol'], PATHINFO_EXTENSION)), 'boyut' => (int)$r['boyut'], 'tarih' => (string)$r['olusturma']];
+}
+/** Dosyanın uzantısı ile içeriği uyuşuyor mu (ör. .docx gerçekten Office dosyası mı). */
+function belge_dogrula(string $tmp, string $ext): void {
+    $h = (string)file_get_contents($tmp, false, null, 0, 8192);
+    $ok = match ($ext) {
+        'pdf' => str_starts_with($h, '%PDF-'),
+        'docx', 'xlsx', 'pptx', 'odt', 'ods', 'odp' => str_starts_with($h, "PK\x03\x04"),
+        'doc', 'xls', 'ppt' => str_starts_with($h, "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"),
+        'rtf' => str_starts_with($h, '{\rtf'),
+        'png', 'jpg', 'jpeg' => (bool)@getimagesize($tmp),
+        'txt', 'csv' => !str_contains($h, "\0"),
+        default => false,
+    };
+    if (!$ok) fail('Dosyanın içeriği uzantısıyla uyuşmuyor (' . strtoupper($ext) . ' değil gibi görünüyor).');
+}
+function safe_belge_path(string $rel): ?string {
+    if (str_contains($rel, '..') || !preg_match('#^belgeler/\d{4}/[A-Za-z0-9_-]+\.[a-z]{2,4}$#', $rel)) return null;
+    $p = pdf_root() . '/' . $rel;
+    return is_file($p) ? $p : null;
+}
+function belgeleri_sil(string $tur, int $id): void {
+    $st = db()->prepare('SELECT dosya_yol FROM belgeler WHERE sahip_tur = ? AND sahip_id = ?'); $st->execute([$tur, $id]);
+    foreach ($st->fetchAll(PDO::FETCH_COLUMN) as $rel) if ($p = safe_belge_path((string)$rel)) @unlink($p);
+    db()->prepare('DELETE FROM belgeler WHERE sahip_tur = ? AND sahip_id = ?')->execute([$tur, $id]);
+}
+
+/** Fatura belgesini (PDF / e-Fatura zip / XML) gönderir. Yetki kontrolü çağıran tarafta yapılır. */
+function send_fatura_belgesi(array $f): void {
+    $id = (int)$f['id'];
+    $p = $f['pdf_yol'] ? safe_pdf_path($f['pdf_yol']) : null;
+    if (!$p) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); exit('Fatura belgesi bulunamadı.'); }
+    session_write_close();
+    $ext = strtolower(pathinfo($p, PATHINFO_EXTENSION));
+    $name = $f['pdf_ad'] ?: ('fatura-' . $id . '.' . $ext);
+    $ascii = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name);
+    $indir = isset($_GET['indir']);
+    if (!$indir && $ext === 'zip') {
+        if (!class_exists('ZipArchive')) { header('Content-Type: text/plain; charset=utf-8'); exit('Sunucuda PHP zip eklentisi kapalı; e-Faturayı görüntülemek için İndir düğmesini kullanın.'); }
+        $z = new ZipArchive(); $html = null; $xml = null;
+        if ($z->open($p) === true) {
+            for ($i = 0; $i < $z->numFiles && $i < 200; $i++) {
+                $n = (string)$z->getNameIndex($i);
+                if ($html === null && preg_match('/\.html?$/i', $n)) $html = (string)$z->getFromIndex($i);
+                if ($xml === null && preg_match('/\.xml$/i', $n)) $xml = (string)$z->getFromIndex($i);
+            }
+            $z->close();
+        }
+        if ($html !== null) { send_sandboxed_html($html); exit; }
+        if ($xml !== null) { header('Content-Type: text/plain; charset=utf-8'); echo $xml; exit; }
+        header('Content-Type: text/plain; charset=utf-8'); exit('Zip içinde görüntülenecek dosya yok.');
+    }
+    if (!$indir && $ext === 'xml') { header('Content-Type: text/plain; charset=utf-8'); header('Cache-Control: private, no-store'); readfile($p); exit; }
+    header('Content-Type: ' . ($ext === 'pdf' ? 'application/pdf' : ($ext === 'zip' ? 'application/zip' : 'application/xml')));
+    header('Content-Length: ' . filesize($p));
+    header('Content-Disposition: ' . ($indir || $ext !== 'pdf' ? 'attachment' : 'inline') . '; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+    header('Cache-Control: private, no-store');
+    readfile($p);
+    exit;
+}
+
+/* ---------- personel girişi: yalnızca kendi kartı, kendi faturaları ve kendisine yapılan ödemeler ---------- */
+/** Personelin görebileceği kart alanları: müşteriye satış fiyatı (Müşteri A/G) ve notlar asla gönderilmez. */
+function personel_karti(array $c): array {
+    $mus = '';
+    if ($c['musteri_id']) { $st = db()->prepare('SELECT ad FROM cariler WHERE id = ?'); $st->execute([$c['musteri_id']]); $mus = (string)$st->fetchColumn(); }
+    return ['id' => (string)$c['id'], 'ad' => $c['ad'], 'vkn' => $c['vkn'], 'eposta' => $c['eposta'] ?? '', 'telefon' => $c['telefon'] ?? '',
+        'aylikAlis' => (float)$c['aylik_alis'], 'kdvOran' => (float)$c['kdv_oran'], 'vadeGun' => (int)($c['vade_gun'] ?? 0), 'musteriAd' => $mus, 'baslangic' => $c['baslangic'] ?? ''];
+}
+function personel_fatura_api(array $row): array {
+    $o = to_api('faturalar', $row);
+    unset($o['personelId'], $o['projeId']);
+    $o['kaynak'] = $row['kaynak'] ?? '';
+    return $o;
+}
+function personel_islem(string $a, array $user, string $method): void {
+    $cid = (int)($user['cari_id'] ?? 0);
+    $c = $cid ? fetch_row('cariler', $cid) : null;
+    if (!$c || $c['tip'] !== 'personel') fail('Hesabınız bir personel kartına bağlı değil. Yöneticiye başvurun.', 403);
+    $kendi = function (int $fid) use ($cid): array {
+        $f = fetch_row('faturalar', $fid);
+        if (!$f || (int)$f['cari_id'] !== $cid || $f['tur'] !== 'gelen') fail('Fatura bulunamadı.', 404);
+        return $f;
+    };
+    switch ($a) {
+        case 'me':
+            out(['ok' => true, 'user' => $user, 'csrf' => $_SESSION['csrf'], 'ayarlar' => array_intersect_key(ayarlar_genel(), array_flip(['firma_ad', 'uygulama_ad', 'logo_surum', 'logo_koyu', 'kdv_oranlari', 'varsayilan_kdv'])), 'pdfMaxMb' => min((int)cfg('pdf_max_mb', 20), (int)(ini_bytes(ini_get('upload_max_filesize') ?: '2M') / 1048576) ?: 20)]);
+        case 'logout':
+            $_SESSION = []; session_destroy(); out(['ok' => true]);
+        case 'benim':
+            $st = db()->prepare("SELECT * FROM faturalar WHERE cari_id = ? AND tur = 'gelen' ORDER BY tarih, id"); $st->execute([$cid]);
+            $fat = array_map('personel_fatura_api', $st->fetchAll());
+            $st = db()->prepare("SELECT * FROM hareketler WHERE cari_id = ? AND tur = 'odeme' ORDER BY tarih, id"); $st->execute([$cid]);
+            $har = array_map(function ($r) { $o = to_api('hareketler', $r); unset($o['projeId']); return $o; }, $st->fetchAll());
+            $st = db()->prepare("SELECT d.id, d.hareket_id, d.fatura_id, d.tutar FROM odeme_dagitim d JOIN hareketler h ON h.id = d.hareket_id WHERE h.cari_id = ? AND h.tur = 'odeme' ORDER BY d.id"); $st->execute([$cid]);
+            out(['ok' => true, 'kart' => personel_karti($c), 'faturalar' => $fat, 'hareketler' => $har, 'dagitim' => array_map('dagitim_api', $st->fetchAll())]);
+        case 'p_fatura_kaydet':
+            // Fatura bilgisi (JSON, data alanında) + isteğe bağlı belge, tek istekte
+            $in = json_decode((string)($_POST['data'] ?? ''), true);
+            if (!is_array($in)) fail('Fatura bilgisi okunamadı.');
+            $id = isset($in['id']) && ctype_digit((string)$in['id']) ? (int)$in['id'] : 0;
+            $eski = null;
+            if ($id) {
+                $eski = $kendi($id);
+                if (($eski['kaynak'] ?? '') !== 'personel') fail('Bu faturayı yönetici girdiği için değiştiremezsiniz.', 403);
+                if (fatura_odenen($id) > 0) fail('Bu faturaya ödeme yapıldığı için değiştirilemez.', 409);
+            }
+            $girdi = ['tur' => 'gelen', 'cariId' => (string)$cid, 'personelId' => '', 'projeId' => $eski && $eski['proje_id'] ? (string)$eski['proje_id'] : '',
+                'vade' => $eski['vade'] ?? ''];
+            foreach (['no', 'tarih', 'donem', 'matrah', 'kdvOran', 'tevkifat', 'stopajOran', 'aciklama'] as $k) $girdi[$k] = $in[$k] ?? null;
+            if ($id) $girdi['id'] = (string)$id;
+            $dosya = $_FILES['pdf'] ?? null;
+            if (!$id && (!$dosya || ($dosya['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) fail('Fatura belgesini (PDF veya e-Fatura zip) ekleyin.');
+            db()->beginTransaction();
+            try {
+                $rec = save_record('faturalar', $girdi);
+                db()->prepare("UPDATE faturalar SET kaynak = 'personel' WHERE id = ?")->execute([(int)$rec['id']]);
+                if ($dosya && ($dosya['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) store_pdf((int)$rec['id'], $dosya, fetch_row('faturalar', (int)$rec['id']));
+                db()->commit();
+            } catch (Throwable $t) { if (db()->inTransaction()) db()->rollBack(); throw $t; }
+            out(['ok' => true, 'rec' => personel_fatura_api(fetch_row('faturalar', (int)$rec['id']))]);
+        case 'p_fatura_sil':
+            $id = (int)(body()['id'] ?? 0);
+            $f = $kendi($id);
+            if (($f['kaynak'] ?? '') !== 'personel') fail('Bu faturayı yönetici girdiği için silemezsiniz.', 403);
+            if (fatura_odenen($id) > 0) fail('Bu faturaya ödeme yapıldığı için silinemez.', 409);
+            db()->prepare('DELETE FROM faturalar WHERE id = ?')->execute([$id]);
+            if (!empty($f['pdf_yol'])) remove_pdf_file($f['pdf_yol']);
+            audit('faturalar', $id, 'sil', $f, null);
+            out(['ok' => true]);
+        case 'pdf':
+            send_fatura_belgesi($kendi((int)($_GET['id'] ?? 0)));
+        case 'password':
+            sifre_degistir($user);
+        default:
+            fail('Bu işlem için yetkiniz yok.', 403);
+    }
+}
+function sifre_degistir(array $user): void {
+    $b = body();
+    $st = db()->prepare('SELECT sifre_hash FROM kullanicilar WHERE id = ?'); $st->execute([$user['id']]);
+    if (!password_verify((string)($b['eski'] ?? ''), (string)$st->fetchColumn())) fail('Mevcut şifre hatalı.');
+    if (mb_strlen((string)($b['yeni'] ?? '')) < 10) fail('Yeni şifre en az 10 karakter olmalı.');
+    db()->prepare('UPDATE kullanicilar SET sifre_hash = ? WHERE id = ?')->execute([password_hash((string)$b['yeni'], PASSWORD_DEFAULT), $user['id']]);
+    out(['ok' => true]);
+}
+
 /** Tüm tabloların yapısı ve kayıtları (phpMyAdmin ile içe aktarılabilir SQL). */
 function sql_dump(): string {
     $pdo = db();
@@ -487,6 +642,11 @@ if (!$user) fail('Oturum kapandı. Yeniden giriş yapın.', 401);
 
 if ($method === 'POST' && !hash_equals($_SESSION['csrf'], (string)($_SERVER['HTTP_X_CSRF'] ?? ''))) fail('Oturum doğrulanamadı; sayfayı yenileyin.', 403);
 ensure_schema();
+if ($user['rol'] === 'personel') {
+    // Personel hesabı ayrı ve dar bir uç kümesine yönlenir; aşağıdaki hiçbir işleme ulaşamaz.
+    try { personel_islem($a, $user, $method); }
+    catch (PDOException $ex) { error_log('Cari Takip: ' . $ex->getMessage()); fail('Veritabanı hatası. Tekrar deneyin.', 500); }
+}
 $isAdmin = $user['rol'] === 'admin';
 $needAdmin = fn() => $isAdmin ?: fail('Bu işlem için yönetici yetkisi gerekiyor.', 403);
 
@@ -502,6 +662,7 @@ switch ($a) {
         $r = [];
         foreach (array_keys(ENT) as $t) $r[$t] = array_map(fn($row) => to_api($t, $row), db()->query("SELECT * FROM {$t} ORDER BY id")->fetchAll());
         $r['dagitim'] = array_map('dagitim_api', db()->query('SELECT id, hareket_id, fatura_id, tutar FROM odeme_dagitim ORDER BY id')->fetchAll());
+        $r['belgeler'] = array_map('belge_api', db()->query('SELECT * FROM belgeler ORDER BY olusturma DESC, id DESC')->fetchAll());
         out(['ok' => true, 'data' => $r]);
 
     case 'save':
@@ -531,6 +692,7 @@ switch ($a) {
             throw $ex;
         }
         if ($t === 'faturalar' && !empty($old['pdf_yol'])) remove_pdf_file($old['pdf_yol']);
+        if ($t === 'cariler' || $t === 'projeler') belgeleri_sil($t === 'cariler' ? 'cari' : 'proje', $id);
         audit($t, $id, 'sil', $old, null);
         out(['ok' => true]);
 
@@ -563,37 +725,59 @@ switch ($a) {
         out(['ok' => true, 'rec' => $rec]);
 
     case 'pdf':
-        $id = (int)($_GET['id'] ?? 0);
-        $f = fetch_row('faturalar', $id);
-        $p = $f && $f['pdf_yol'] ? safe_pdf_path($f['pdf_yol']) : null;
-        if (!$p) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); exit('Fatura belgesi bulunamadı.'); }
+        $f = fetch_row('faturalar', (int)($_GET['id'] ?? 0));
+        if (!$f) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); exit('Fatura belgesi bulunamadı.'); }
+        send_fatura_belgesi($f);
+
+    case 'belge_yukle':
+        $needAdmin();
+        $tur = $_POST['sahip_tur'] ?? ''; $sid = (int)($_POST['sahip_id'] ?? 0);
+        if (!in_array($tur, ['cari', 'proje'], true) || !fetch_row($tur === 'cari' ? 'cariler' : 'projeler', $sid)) fail('Belgenin ekleneceği kayıt bulunamadı.', 404);
+        $f = $_FILES['dosya'] ?? [];
+        if ($err = upload_error($f)) fail(str_replace('PDF dosyası', 'Dosya', $err));
+        if (!is_uploaded_file($f['tmp_name'])) fail('Dosya yüklenemedi.');
+        $max = (int)cfg('pdf_max_mb', 20) * 1024 * 1024;
+        if ($f['size'] > $max) fail('Dosya ' . cfg('pdf_max_mb', 20) . ' MB\'tan büyük olamaz.');
+        $ext = strtolower(pathinfo((string)$f['name'], PATHINFO_EXTENSION));
+        if (!isset(BELGE_TUR[$ext])) fail('Bu dosya türü eklenemez. PDF, Word, Excel, PowerPoint, OpenDocument, RTF, TXT, CSV, PNG veya JPG yükleyin.');
+        belge_dogrula($f['tmp_name'], $ext);
+        $sub = 'belgeler/' . date('Y');
+        $root = pdf_root();
+        if (!is_dir("$root/$sub") && !@mkdir("$root/$sub", 0750, true)) fail('Belge klasörü oluşturulamadı.', 500);
+        $rel = "$sub/{$tur}{$sid}_" . bin2hex(random_bytes(6)) . '.' . $ext;
+        if (!move_uploaded_file($f['tmp_name'], "$root/$rel")) fail('Dosya kaydedilemedi; klasör yazma iznini kontrol edin.', 500);
+        @chmod("$root/$rel", 0640);
+        $ad = mb_substr(basename((string)$f['name']), 0, 255);
+        $acik = mb_substr(trim((string)($_POST['aciklama'] ?? '')), 0, 255);
+        db()->prepare('INSERT INTO belgeler (sahip_tur, sahip_id, ad, aciklama, dosya_yol, boyut, yukleyen) VALUES (?,?,?,?,?,?,?)')->execute([$tur, $sid, $ad, $acik, $rel, (int)$f['size'], $user['id']]);
+        $bid = (int)db()->lastInsertId();
+        audit('belgeler', $bid, 'ekle', null, ['sahip' => "$tur:$sid", 'ad' => $ad]);
+        $st = db()->prepare('SELECT * FROM belgeler WHERE id = ?'); $st->execute([$bid]);
+        out(['ok' => true, 'rec' => belge_api($st->fetch())]);
+
+    case 'belge':
+        $st = db()->prepare('SELECT * FROM belgeler WHERE id = ?'); $st->execute([(int)($_GET['id'] ?? 0)]);
+        $b = $st->fetch(); $p = $b ? safe_belge_path((string)$b['dosya_yol']) : null;
+        if (!$p) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8'); exit('Belge bulunamadı.'); }
         session_write_close();
         $ext = strtolower(pathinfo($p, PATHINFO_EXTENSION));
-        $name = $f['pdf_ad'] ?: ('fatura-' . $id . '.' . $ext);
-        $ascii = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name);
-        $indir = isset($_GET['indir']);
-        if (!$indir && $ext === 'zip') {
-            if (!class_exists('ZipArchive')) { header('Content-Type: text/plain; charset=utf-8'); exit('Sunucuda PHP zip eklentisi kapalı; e-Faturayı görüntülemek için İndir düğmesini kullanın.'); }
-            $z = new ZipArchive(); $html = null; $xml = null;
-            if ($z->open($p) === true) {
-                for ($i = 0; $i < $z->numFiles && $i < 200; $i++) {
-                    $n = (string)$z->getNameIndex($i);
-                    if ($html === null && preg_match('/\.html?$/i', $n)) $html = (string)$z->getFromIndex($i);
-                    if ($xml === null && preg_match('/\.xml$/i', $n)) $xml = (string)$z->getFromIndex($i);
-                }
-                $z->close();
-            }
-            if ($html !== null) { send_sandboxed_html($html); exit; }
-            if ($xml !== null) { header('Content-Type: text/plain; charset=utf-8'); echo $xml; exit; }
-            header('Content-Type: text/plain; charset=utf-8'); exit('Zip içinde görüntülenecek dosya yok.');
-        }
-        if (!$indir && $ext === 'xml') { header('Content-Type: text/plain; charset=utf-8'); header('Cache-Control: private, no-store'); readfile($p); exit; }
-        header('Content-Type: ' . ($ext === 'pdf' ? 'application/pdf' : ($ext === 'zip' ? 'application/zip' : 'application/xml')));
+        $inline = !isset($_GET['indir']) && in_array($ext, ['pdf', 'png', 'jpg', 'jpeg', 'txt', 'csv'], true);
+        header('Content-Type: ' . (BELGE_TUR[$ext] ?? 'application/octet-stream') . (in_array($ext, ['txt', 'csv'], true) ? '; charset=utf-8' : ''));
         header('Content-Length: ' . filesize($p));
-        header('Content-Disposition: ' . ($indir || $ext !== 'pdf' ? 'attachment' : 'inline') . '; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($name));
+        header('Content-Disposition: ' . ($inline ? 'inline' : 'attachment') . '; filename="' . preg_replace('/[^A-Za-z0-9._-]+/', '_', $b['ad']) . '"; filename*=UTF-8\'\'' . rawurlencode($b['ad']));
+        if ($ext !== 'pdf') header("Content-Security-Policy: default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
         header('Cache-Control: private, no-store');
-        readfile($p);
-        exit;
+        readfile($p); exit;
+
+    case 'belge_sil':
+        $needAdmin();
+        $id = (int)(body()['id'] ?? 0);
+        $st = db()->prepare('SELECT * FROM belgeler WHERE id = ?'); $st->execute([$id]);
+        $b = $st->fetch() ?: fail('Belge bulunamadı.', 404);
+        if ($p = safe_belge_path((string)$b['dosya_yol'])) @unlink($p);
+        db()->prepare('DELETE FROM belgeler WHERE id = ?')->execute([$id]);
+        audit('belgeler', $id, 'sil', ['ad' => $b['ad'], 'sahip' => $b['sahip_tur'] . ':' . $b['sahip_id']], null);
+        out(['ok' => true]);
 
     case 'ayar_kaydet':
         $needAdmin();
@@ -639,6 +823,9 @@ switch ($a) {
         $root = pdf_root(); $n = 0;
         foreach (db()->query('SELECT pdf_yol FROM faturalar WHERE pdf_yol IS NOT NULL') as $r) {
             if ($p = safe_pdf_path((string)$r['pdf_yol'])) { $z->addFile($p, 'belgeler/' . $r['pdf_yol']); $n++; }
+        }
+        foreach (db()->query('SELECT dosya_yol FROM belgeler') as $r) {
+            if ($p = safe_belge_path((string)$r['dosya_yol'])) { $z->addFile($p, 'belgeler/' . $r['dosya_yol']); $n++; }
         }
         $z->addFromString('BENIOKU.txt', "Cari Takip yedeği · " . date('d.m.Y H:i') . "\r\n\r\n" .
             "veritabani.sql : tüm tablolar ve kayıtlar. Geri yüklemek için boş bir veritabanında phpMyAdmin > İçe aktar ile çalıştırın.\r\n" .
@@ -695,25 +882,33 @@ switch ($a) {
 
     case 'users':
         $needAdmin();
-        out(['ok' => true, 'users' => db()->query('SELECT id, kullanici, ad, rol, son_giris FROM kullanicilar ORDER BY id')->fetchAll()]);
+        out(['ok' => true, 'users' => db()->query('SELECT id, kullanici, ad, rol, cari_id, son_giris FROM kullanicilar ORDER BY id')->fetchAll()]);
 
     case 'user_save':
         $needAdmin();
         $b = body();
         $id = (int)($b['id'] ?? 0);
-        $rol = in_array($b['rol'] ?? '', ['admin', 'okur'], true) ? $b['rol'] : 'okur';
+        $rol = in_array($b['rol'] ?? '', ['admin', 'okur', 'personel'], true) ? $b['rol'] : 'okur';
+        $cariId = null;
+        if ($rol === 'personel') {
+            $cariId = (int)($b['cariId'] ?? 0);
+            $pc = $cariId ? fetch_row('cariler', $cariId) : null;
+            if (!$pc || $pc['tip'] !== 'personel') fail('Personel girişi için bir personel kartı seçin.');
+            $st = db()->prepare("SELECT COUNT(*) FROM kullanicilar WHERE rol = 'personel' AND cari_id = ? AND id <> ?"); $st->execute([$cariId, (int)($b['id'] ?? 0)]);
+            if ($st->fetchColumn()) fail('Bu personelin zaten bir giriş hesabı var.', 409);
+        }
         $ad = mb_substr(trim((string)($b['ad'] ?? '')), 0, 120);
         $pass = (string)($b['sifre'] ?? '');
         if ($pass !== '' && mb_strlen($pass) < 10) fail('Şifre en az 10 karakter olmalı.');
         if ($id) {
             if ($id === (int)$user['id'] && $rol !== 'admin') fail('Kendi yönetici yetkinizi kaldıramazsınız.');
-            db()->prepare('UPDATE kullanicilar SET ad = ?, rol = ? WHERE id = ?')->execute([$ad, $rol, $id]);
+            db()->prepare('UPDATE kullanicilar SET ad = ?, rol = ?, cari_id = ? WHERE id = ?')->execute([$ad, $rol, $cariId, $id]);
             if ($pass !== '') db()->prepare('UPDATE kullanicilar SET sifre_hash = ? WHERE id = ?')->execute([password_hash($pass, PASSWORD_DEFAULT), $id]);
         } else {
             $k = trim((string)($b['kullanici'] ?? ''));
             if (!preg_match('/^[a-zA-Z0-9._-]{3,60}$/', $k)) fail('Kullanıcı adı en az 3 karakter olmalı; harf, rakam, nokta ve tire kullanın.');
             if ($pass === '') fail('Yeni kullanıcı için şifre girin.');
-            try { db()->prepare('INSERT INTO kullanicilar (kullanici, ad, sifre_hash, rol) VALUES (?,?,?,?)')->execute([$k, $ad ?: $k, password_hash($pass, PASSWORD_DEFAULT), $rol]); }
+            try { db()->prepare('INSERT INTO kullanicilar (kullanici, ad, sifre_hash, rol, cari_id) VALUES (?,?,?,?,?)')->execute([$k, $ad ?: $k, password_hash($pass, PASSWORD_DEFAULT), $rol, $cariId]); }
             catch (PDOException $ex) { fail('Bu kullanıcı adı zaten var.', 409); }
         }
         audit('kullanicilar', $id ?: (int)db()->lastInsertId(), $id ? 'guncelle' : 'ekle', null, ['rol' => $rol, 'ad' => $ad]);
@@ -728,12 +923,7 @@ switch ($a) {
         out(['ok' => true]);
 
     case 'password':
-        $b = body();
-        $st = db()->prepare('SELECT sifre_hash FROM kullanicilar WHERE id = ?'); $st->execute([$user['id']]);
-        if (!password_verify((string)($b['eski'] ?? ''), (string)$st->fetchColumn())) fail('Mevcut şifre hatalı.');
-        if (mb_strlen((string)($b['yeni'] ?? '')) < 10) fail('Yeni şifre en az 10 karakter olmalı.');
-        db()->prepare('UPDATE kullanicilar SET sifre_hash = ? WHERE id = ?')->execute([password_hash((string)$b['yeni'], PASSWORD_DEFAULT), $user['id']]);
-        out(['ok' => true]);
+        sifre_degistir($user);
 
     case 'log':
         $needAdmin();

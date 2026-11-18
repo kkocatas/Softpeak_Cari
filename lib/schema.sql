@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS kullanicilar (
   kullanici VARCHAR(60) NOT NULL UNIQUE,
   ad VARCHAR(120) NOT NULL,
   sifre_hash VARCHAR(255) NOT NULL,
-  rol ENUM('admin','okur') NOT NULL DEFAULT 'okur',
+  rol ENUM('admin','okur','personel') NOT NULL DEFAULT 'okur',
+  cari_id INT UNSIGNED NULL,
   son_giris DATETIME NULL,
   olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
@@ -124,4 +125,17 @@ CREATE TABLE IF NOT EXISTS giris_denemeleri (
 CREATE TABLE IF NOT EXISTS ayarlar (
   anahtar VARCHAR(50) NOT NULL PRIMARY KEY,
   deger MEDIUMTEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE IF NOT EXISTS belgeler (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  sahip_tur ENUM('cari','proje') NOT NULL,
+  sahip_id INT UNSIGNED NOT NULL,
+  ad VARCHAR(255) NOT NULL,
+  aciklama VARCHAR(255) NOT NULL DEFAULT '',
+  dosya_yol VARCHAR(255) NOT NULL,
+  boyut INT UNSIGNED NOT NULL DEFAULT 0,
+  yukleyen INT UNSIGNED NULL,
+  olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_sahip (sahip_tur, sahip_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;

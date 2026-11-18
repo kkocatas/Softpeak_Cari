@@ -58,7 +58,9 @@ function current_user(): ?array {
     if (empty($_SESSION['uid'])) return null;
     static $u = false;
     if ($u === false) {
-        $st = db()->prepare('SELECT id, kullanici, ad, rol FROM kullanicilar WHERE id = ?');
+        // cari_id sütunu sürüm 30 ile geldi; şema güncellenmeden önceki ilk istekte de çalışsın
+        try { $st = db()->prepare('SELECT id, kullanici, ad, rol, cari_id FROM kullanicilar WHERE id = ?'); $st->execute([$_SESSION['uid']]); }
+        catch (PDOException $e) { $st = db()->prepare('SELECT id, kullanici, ad, rol, NULL AS cari_id FROM kullanicilar WHERE id = ?'); }
         $st->execute([$_SESSION['uid']]);
         $u = $st->fetch() ?: null;
         if (!$u) { $_SESSION = []; }
@@ -127,7 +129,7 @@ function pdf_root(): string {
 }
 
 /* ---------- veritabanı sürümü (sonradan eklenen tablo/sütunlar) ---------- */
-const SCHEMA_VER = 6;
+const SCHEMA_VER = 7;
 /** Sonradan eklenen tabloları mevcut kurulumlarda oluşturur (oturum başına bir kez). */
 function ensure_schema(): void {
     if (($_SESSION['schema'] ?? 0) >= SCHEMA_VER) return;
@@ -156,6 +158,13 @@ function ensure_schema(): void {
     $st = db()->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cariler' AND COLUMN_NAME = 'vade_gun'");
     $st->execute();
     if (!(int)$st->fetchColumn()) db()->exec('ALTER TABLE cariler ADD COLUMN vade_gun SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER kdv_oran');
+    // v7: personel girişi (rol + bağlı personel kartı), sözleşme/belge ekleri, faturayı kimin girdiği
+    $kol = function (string $t, string $c): bool { $st = db()->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'); $st->execute([$t, $c]); return (bool)$st->fetchColumn(); };
+    $st = db()->prepare("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kullanicilar' AND COLUMN_NAME = 'rol'"); $st->execute();
+    if (!str_contains((string)$st->fetchColumn(), 'personel')) db()->exec("ALTER TABLE kullanicilar MODIFY rol ENUM('admin','okur','personel') NOT NULL DEFAULT 'okur'");
+    if (!$kol('kullanicilar', 'cari_id')) db()->exec('ALTER TABLE kullanicilar ADD COLUMN cari_id INT UNSIGNED NULL AFTER rol');
+    if (!$kol('faturalar', 'kaynak')) db()->exec("ALTER TABLE faturalar ADD COLUMN kaynak VARCHAR(20) NOT NULL DEFAULT ''");
+    db()->exec("CREATE TABLE IF NOT EXISTS belgeler (   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,   sahip_tur ENUM('cari','proje') NOT NULL,   sahip_id INT UNSIGNED NOT NULL,   ad VARCHAR(255) NOT NULL,   aciklama VARCHAR(255) NOT NULL DEFAULT '',   dosya_yol VARCHAR(255) NOT NULL,   boyut INT UNSIGNED NOT NULL DEFAULT 0,   yukleyen INT UNSIGNED NULL,   olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   KEY ix_sahip (sahip_tur, sahip_id) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci");
     $_SESSION['schema'] = SCHEMA_VER;
     unset($GLOBALS['__ayar_cache']);
 }

@@ -7,7 +7,7 @@ header('Cache-Control: no-store');
 $user = null;
 try { $user = current_user(); }
 catch (Throwable $t) { http_response_code(500); exit('Veritabanına bağlanılamadı. config.php ayarlarını kontrol edin veya setup.php ile kurulumu tamamlayın.'); }
-$v = '29';
+$v = '30';
 $marka = 'Cari Takip'; $logo = null; $logoKoyu = 'normal';
 try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logoKoyu = ayar('logo_koyu') ?: 'normal'; } catch (Throwable $t) { /* ayarlar okunamazsa varsayılan ad */ }
 ?><!doctype html>
@@ -66,7 +66,7 @@ document.getElementById('login').addEventListener('submit', async e => {
     <div class="brand" id="brand"><?= marka_html() ?><small><?= e($marka) ?> · sürüm <?= $v ?></small></div>
     <nav class="nav" id="nav"></nav>
     <div class="who">
-      <span class="av" aria-hidden="true"><?= e(mb_strtoupper(mb_substr(trim((string)$user['ad']) ?: (string)$user['kullanici'], 0, 1))) ?></span><span><?= e($user['ad']) ?><br><span class="muted small"><?= $user['rol'] === 'admin' ? 'Yönetici' : 'Salt okunur' ?></span></span>
+      <span class="av" aria-hidden="true"><?= e(mb_strtoupper(mb_substr(trim((string)$user['ad']) ?: (string)$user['kullanici'], 0, 1))) ?></span><span><?= e($user['ad']) ?><br><span class="muted small"><?= $user['rol'] === 'admin' ? 'Yönetici' : ($user['rol'] === 'personel' ? 'Personel' : 'Salt okunur') ?></span></span>
       <button class="btn ghost" id="logout">Çıkış</button>
     </div>
   </aside>

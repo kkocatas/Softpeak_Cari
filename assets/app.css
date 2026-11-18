@@ -563,3 +563,30 @@ table.dokum tbody tr:last-child td{border-bottom:0}
 .acik-hata{margin:8px 0 0;padding-left:18px}
 .acik-hata li{margin:2px 0}
 .banner .actions{flex-shrink:0;align-items:center}
+
+/* ================= sürüm 30 ================= */
+/* belgeler */
+.belge-list{list-style:none;margin:0;padding:0}
+.belge-list li{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-2)}
+.belge-list li:last-child{border-bottom:0}
+.bl-ad{flex:1;min-width:0}
+.bl-ad a{font-weight:600;color:var(--fg);text-decoration:none;overflow-wrap:anywhere}
+.bl-ad a:hover{color:var(--accent);text-decoration:underline}
+.belge-tur{flex-shrink:0;width:44px;height:44px;border-radius:10px;display:grid;place-items:center;font-size:10.5px;font-weight:700;letter-spacing:.02em;background:var(--sunk);color:var(--fg-2)}
+.belge-tur.t-pdf{background:var(--debit-soft);color:var(--debit)}
+.belge-tur.t-doc,.belge-tur.t-docx,.belge-tur.t-odt,.belge-tur.t-rtf{background:var(--accent-soft);color:var(--accent)}
+.belge-tur.t-xls,.belge-tur.t-xlsx,.belge-tur.t-ods,.belge-tur.t-csv{background:var(--credit-soft);color:var(--credit)}
+.belge-tur.t-ppt,.belge-tur.t-pptx,.belge-tur.t-odp{background:var(--warn-soft);color:var(--warn)}
+.belge-panel.over{outline:2px dashed var(--accent);outline-offset:4px;background:var(--accent-soft)}
+.chip.kaynak{font-size:11px;padding:3px 8px;vertical-align:1px}
+/* KDV özeti */
+.kdv-not{margin:14px 0 0;max-width:110ch;line-height:1.55}
+table.kdvtab th{white-space:normal;line-height:1.25;vertical-align:bottom}
+/* personel hesabı */
+.portal-drop{margin-bottom:22px}
+.portal-form{border-color:var(--accent-line)}
+.portal-form .calc{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:720px){
+  .belge-list li{flex-wrap:wrap}.belge-list .yap-btn{margin-left:56px}
+  .panel.belge-panel{padding:16px}
+}
