@@ -138,8 +138,9 @@ function faturaPersonelleri(f) {
 function kalemler(T) {
   T = normText(T);
   const out = [];
-  const end = T.search(/Mal\s*Hizmet\s*Toplam\s*Tutar/i);
-  let start = end >= 0 ? T.lastIndexOf("Sıra", end) : -1; if (start < 0 && end >= 0) start = T.slice(0, end).search(/S[ıi]ra\s*No/i);
+  let end = T.search(/Mal\s*[\/-]?\s*Hizmet\s*Toplam\s*Tutar/i);
+  if (end < 0) end = T.search(/\n\s*(?:Ara\s*Toplam|Toplam\s*Tutar|KDV\s*Matrah[ıi]|Matrah\b)/i);
+  let start = end >= 0 ? T.lastIndexOf("Sıra", end) : -1; if (start < 0 && end >= 0) start = T.slice(0, end).search(/S[ıi]ra\s*No|(?:Mal\s*[\/-]?\s*Hizmet|Malzeme|Hizmet)\s*(?:Açıklama|Adı|Cinsi)/i);
   if (end >= 0 && start >= 0) {
     let blok = T.slice(start, end); const m = blok.match(/(?:^|\n)\s*1\s+(?=[^\d\s%])/);
     if (m) {
@@ -158,23 +159,51 @@ function kalemler(T) {
   if (not && !/^Yaln[ıi]z/i.test(not[1].trim())) satirlar.push("Not: " + not[1].trim());
   return satirlar.join(" | ").slice(0, 500);
 }
+/** Kalem tablosu bulunamazsa: PDF metninde adı geçen personelin satırları (eşleştirme için yeterli). */
+function personelSatirlari(T) {
+  const per = S.data.cariler.filter(c => c.tip === "personel"), out = [];
+  normText(T).split("\n").forEach(l => { const k = foldName(l); if (k && per.some(c => adGeciyor(k, c)) && !out.includes(l.trim())) out.push(l.replace(/\s+/g, " ").trim()); });
+  return out.join(" | ").slice(0, 500);
+}
+function bosAciklamalar() { return S.data.faturalar.filter(f => f.tur === "kesilen" && f.pdf && !(f.aciklama || "").trim() && !f.personelId); }
 async function aciklamalariDoldur() {
   if (S.acikBusy) return;
-  const list = S.data.faturalar.filter(f => f.tur === "kesilen" && f.pdf && !(f.aciklama || "").trim());
-  S.acikBusy = true; render();
-  let n = 0, bos = 0;
+  const list = bosAciklamalar();
+  S.acikBusy = true; S.acikSonuc = null; render();
+  let n = 0; const hata = [];
   for (const f of list) {
+    const ad = (f.no || fd(f.tarih)) + " (" + cariAd(f.cariId) + ")";
     try {
       const isPdf = !f.belgeTur || f.belgeTur === "pdf";
-      const r = await fetch(pdfUrl(f.id, !isPdf), { credentials: "same-origin" }); if (!r.ok) throw new Error("Belge açılamadı");
+      const r = await fetch(pdfUrl(f.id, !isPdf), { credentials: "same-origin" }); if (!r.ok) throw new Error("belge sunucuda açılamadı");
       const blob = await r.blob();
-      const ac = isPdf ? kalemler(await pdfText(blob)) : (await faturaDosyalari(new File([blob], "fatura." + f.belgeTur, { type: f.belgeTur === "zip" ? "application/zip" : "application/xml" })))[0].ubl.aciklama;
-      if (!ac) { bos++; continue; }
+      let ac = "";
+      if (isPdf) {
+        const T = await pdfText(blob);
+        if (T.replace(/\s+/g, "").length < 40) throw new Error("PDF'te metin yok (taranmış / resim olarak kaydedilmiş)");
+        ac = kalemler(T) || personelSatirlari(T);
+        if (!ac) throw new Error("kalem tablosu bulunamadı ve personel adı geçmiyor");
+      } else ac = (await faturaDosyalari(new File([blob], "fatura." + f.belgeTur, { type: f.belgeTur === "zip" ? "application/zip" : "application/xml" })))[0].ubl.aciklama;
+      if (!ac) throw new Error("e-Fatura dosyasında kalem açıklaması yok");
       const j = await api("save", { q: "&t=faturalar", body: Object.assign({}, f, { aciklama: ac }) }); upsert("faturalar", j.rec); n++;
-    } catch (e) { bos++; }
+    } catch (e) { hata.push(ad + ": " + e.message); }
   }
-  S.acikBusy = false; render();
-  toast(n + " faturanın açıklaması PDF'ten dolduruldu" + (bos ? ", " + bos + " fatura okunamadı" : ""));
+  S.acikBusy = false;
+  S.acikSonuc = { n, hata };
+  // Okunamayanlar için uyarı bir daha kendiliğinden çıkmasın (yeni boş fatura gelince yeniden çıkar)
+  if (hata.length) await yapGizle("acikbos:" + bosAciklamalar().map(f => f.id).sort().join("-").slice(0, 70));
+  render();
+  toast(n + " faturanın açıklaması dolduruldu" + (hata.length ? ", " + hata.length + " fatura okunamadı" : ""));
+}
+function acikUyari() {
+  if (!S.canWrite) return "";
+  const R = S.acikSonuc;
+  if (R && R.hata.length) return '<div class="banner"><span><b>' + R.hata.length + " fatura okunamadı.</b> " + (R.n ? R.n + " faturanın açıklaması dolduruldu. " : "") + "Bunların açıklamasını fatura penceresinde elle yazabilir ya da \"Hizmeti veren personel\" alanından personeli seçebilirsiniz." +
+    '<ul class="small acik-hata">' + R.hata.map(x => "<li>" + esc(x) + "</li>").join("") + '</ul></span><button class="btn ghost sm yap-sil" data-act="acik-kapat" aria-label="Kapat">✕</button></div>';
+  const bos = bosAciklamalar(); if (!bos.length) return "";
+  const k = "acikbos:" + bos.map(f => f.id).sort().join("-").slice(0, 70);
+  if (yapGizli().has(k)) return "";
+  return '<div class="banner"><span><b>' + bos.length + ' kesilen faturanın açıklaması boş.</b> Müşteriye kesilen faturayı personelle eşleştirmek için kalem satırlarını (personel adlarını) PDF\'lerden okuyalım.</span><span class="actions"><button class="btn" data-act="acik-doldur"' + (S.acikBusy ? " disabled" : "") + ">" + (S.acikBusy ? "Okunuyor…" : "PDF'lerden oku") + '</button><button class="btn ghost sm yap-sil" data-yapsil="' + k + '" aria-label="Uyarıyı kapat" title="Uyarıyı kapat">✕</button></span></div>';
 }
 
 /* ---------- sunucu ---------- */
@@ -359,8 +388,7 @@ function vOzet() {
   h += vadeCizelge();
   h += yapilacaklar(d);
   h += '<div class="panel"><div class="panel-head"><h2>Dönem tablosu</h2><div class="filters" style="margin:0"><button class="btn ghost" data-donem="-1" aria-label="Önceki ay">‹</button><input type="month" id="donem-sec" value="' + d + '"><button class="btn ghost" data-donem="1" aria-label="Sonraki ay">›</button></div></div>';
-  const bosAc = S.data.faturalar.filter(f => f.tur === "kesilen" && f.pdf && !(f.aciklama || "").trim()).length;
-  if (S.canWrite && bosAc) h += '<div class="banner"><span><b>' + bosAc + ' kesilen faturanın açıklaması boş.</b> Müşteriye kesilen faturayı personelle eşleştirmek için kalem satırlarını (personel adlarını) PDF\'lerden okuyalım.</span><button class="btn" data-act="acik-doldur"' + (S.acikBusy ? " disabled" : "") + ">" + (S.acikBusy ? "Okunuyor…" : "PDF'lerden oku") + "</button></div>";
+  h += acikUyari();
   if (!per.length) h += '<div class="empty"><strong>Henüz personel yok</strong>Personel sayfasından ekleyin; her ay gelen ve kesilen faturalar burada eşleşir.</div>';
   else {
     h += '<div class="tw"><table><thead><tr><th>Personel</th><th>Hizmet verdiği</th><th>Gelen fatura</th><th class="num">Gelen</th><th>Müşteriye fatura</th><th class="num">Kesilen</th><th class="num">Marj</th><th class="num">Personel bakiyesi</th></tr></thead><tbody>';
@@ -1768,6 +1796,7 @@ document.addEventListener("click", e => {
   else if (a === "logo-sil") { api("logo_sil", { method: "POST" }).then(j => { ayarUygula(j.ayarlar); toast("Logo kaldırıldı"); }).catch(er => toast(er.message)); }
   else if (a === "csv-agrapor") agRaporCsv();
   else if (a === "acik-doldur") aciklamalariDoldur();
+  else if (a === "acik-kapat") { S.acikSonuc = null; render(); }
   else if (a === "bos-toggle") { S.bosAcik = !S.bosAcik; render(); }
   else if (a === "fat-ac") { const cid = S.detail && S.detail.id; S.data.faturalar.filter(f => f.cariId === cid).forEach(f => { S.acikFat[f.id] = 1; }); render(); }
   else if (a === "fat-kapat") { S.acikFat = {}; render(); }
