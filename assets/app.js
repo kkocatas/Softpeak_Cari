@@ -251,19 +251,61 @@ function ic(k) { return '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">'
 /* ---------- sözleşme ve belge ekleri ---------- */
 function boyutYaz(b) { return b >= 1048576 ? (b / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(b / 1024)) + " KB"; }
 const BELGE_KABUL = ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.txt,.csv,.png,.jpg,.jpeg";
-function belgePanel(tur, id) {
+function belgeEkleBtn(tur, id, sm) {
+  return S.canWrite ? '<label class="btn sm' + (sm ? " ghost" : "") + '">' + (S.belgeBusy ? "Yükleniyor…" : "+ Belge ekle") + '<input type="file" class="belge-in" data-belge-sahip="' + tur + ":" + id + '" accept="' + BELGE_KABUL + '" multiple hidden></label>' : "";
+}
+function belgeListe(tur, id, kompakt) {
   const bs = (S.data.belgeler || []).filter(b => b.sahipTur === tur && b.sahipId === id);
-  let h = '<div class="panel belge-panel" data-belge-hedef="' + tur + ":" + id + '"><div class="panel-head"><h2>Sözleşmeler ve belgeler</h2>' +
-    (S.canWrite ? '<label class="btn sm" for="belge-in">' + (S.belgeBusy ? "Yükleniyor…" : "+ Belge ekle") + '</label><input type="file" id="belge-in" data-belge-sahip="' + tur + ":" + id + '" accept="' + BELGE_KABUL + '" multiple hidden>' : "") + "</div>";
-  if (!bs.length) h += '<div class="empty small">' + (S.canWrite ? "Sözleşme, teklif, ek protokol gibi belgeleri buraya ekleyin ya da dosyayı bu alana sürükleyin. PDF, Word, Excel, PowerPoint ve resim dosyaları eklenebilir." : "Eklenmiş belge yok.") + "</div>";
-  else h += '<ul class="belge-list">' + bs.map(b => {
+  if (!bs.length) return kompakt ? "" : '<div class="empty small">' + (S.canWrite ? "Sözleşme, teklif, ek protokol gibi belgeleri ekleyin ya da dosyayı bu alana sürükleyin. PDF, Word, Excel, PowerPoint ve resim dosyaları eklenebilir." : "Eklenmiş belge yok.") + "</div>";
+  return '<ul class="belge-list' + (kompakt ? " kompakt" : "") + '">' + bs.map(b => {
     const goster = ["pdf", "png", "jpg", "jpeg", "txt", "csv"].includes(b.tur), url = "api.php?a=belge&id=" + encodeURIComponent(b.id);
     return '<li><span class="belge-tur t-' + esc(b.tur) + '">' + esc(b.tur.toUpperCase()) + '</span><div class="bl-ad"><a href="' + url + (goster ? "" : "&indir=1") + '" target="_blank" rel="noopener">' + esc(b.ad) + '</a><div class="small muted">' + fd((b.tarih || "").slice(0, 10)) + " · " + boyutYaz(b.boyut) + (b.aciklama ? " · " + esc(b.aciklama) : "") + "</div></div>" +
       '<div class="yap-btn">' + (goster ? '<a class="btn sm" href="' + url + '" target="_blank" rel="noopener">Aç</a>' : "") + '<a class="btn sm" href="' + url + '&indir=1">İndir</a>' +
       (S.canWrite ? '<button class="btn ghost sm sil" data-belge-sil="' + b.id + '">' + (S.belgeSilOnay === b.id ? "Silinsin mi?" : "Sil") + "</button>" : "") + "</div></li>";
   }).join("") + "</ul>";
+}
+function tarihSaat(t) { return t ? fd(t.slice(0, 10)) + (t.length > 15 ? " " + t.slice(11, 16) : "") : ""; }
+function notlarHtml(tur, id, kompakt) {
+  const ns = (S.data.notlar || []).filter(n => n.sahipTur === tur && n.sahipId === id);
+  let h = S.canWrite ? '<form class="not-form" data-not-sahip="' + tur + ":" + id + '" novalidate><textarea rows="' + (kompakt ? 2 : 3) + '" maxlength="2000" placeholder="Not yazın; ör. görüşme notu, söz verilen ödeme tarihi" aria-label="Not"></textarea><button class="btn sm primary" type="submit">Not ekle</button></form>' : "";
+  if (ns.length) h += '<ul class="not-list">' + ns.map(n => '<li><div class="not-metin">' + esc(n.metin) + '</div><div class="small muted">' + esc(n.yazan || "") + (n.yazan ? " · " : "") + tarihSaat(n.tarih) +
+    (S.canWrite ? ' · <button class="linkbtn sil-link" data-not-sil="' + n.id + '">' + (S.notSilOnay === n.id ? "Silinsin mi?" : "Sil") + "</button>" : "") + "</div></li>").join("") + "</ul>";
+  else if (!kompakt) h += '<div class="empty small">' + (S.canWrite ? "Henüz not yok." : "Not yok.") + "</div>";
+  return h;
+}
+function ekPanel(tur, id) {
+  return '<div class="panel ek-panel" data-belge-hedef="' + tur + ":" + id + '"><div class="panel-head"><h2>Notlar ve belgeler</h2>' + belgeEkleBtn(tur, id) + '</div><div class="ek-grid"><div><h3>Notlar</h3>' + notlarHtml(tur, id) + "</div><div><h3>Sözleşmeler ve belgeler</h3>" + belgeListe(tur, id) + "</div></div></div>";
+}
+function ekSayisi(tur, id) { return { n: (S.data.notlar || []).filter(x => x.sahipTur === tur && x.sahipId === id).length, b: (S.data.belgeler || []).filter(x => x.sahipTur === tur && x.sahipId === id).length }; }
+function ekChip(f) { const e = ekSayisi("fatura", f.id); return e.n || e.b ? ' <span class="chip mute ek-chip" title="Bu faturaya eklenmiş notlar ve belgeler">' + [e.n && e.n + " not", e.b && e.b + " belge"].filter(Boolean).join(" · ") + "</span>" : ""; }
+async function notEkle(sahip, metin, form) {
+  metin = String(metin || "").trim(); if (!metin) { toast("Not boş olamaz."); return; }
+  const [tur, id] = sahip.split(":");
+  try { const j = await api("not_ekle", { body: { sahipTur: tur, sahipId: id, metin } }); (S.data.notlar = S.data.notlar || []).unshift(j.rec); render(); toast("Not eklendi"); }
+  catch (e) { toast(e.message); }
+}
+async function notSil(id) {
+  if (S.notSilOnay !== id) { S.notSilOnay = id; render(); setTimeout(() => { if (S.notSilOnay === id) { S.notSilOnay = null; render(); } }, 4000); return; }
+  S.notSilOnay = null;
+  try { await api("not_sil", { body: { id } }); S.data.notlar = S.data.notlar.filter(n => n.id !== id); render(); toast("Not silindi"); } catch (e) { toast(e.message); }
+}
+
+/* ---------- hatırlanan cihazlar ---------- */
+function cihazAdi(ua) {
+  ua = ua || ""; const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac OS X|Macintosh/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "Bilinmeyen cihaz";
+  const br = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "";
+  return os + (br ? " · " + br : "");
+}
+async function loadCihazlar() { try { S.cihazlar = (await api("cihazlar")).cihazlar; } catch (e) { S.cihazlar = []; } render(); }
+function cihazPanel() {
+  const L = S.cihazlar;
+  let h = '<div class="panel"><div class="panel-head"><h2>Hatırlanan cihazlar</h2>' + (L && L.length ? '<button class="btn sm danger" data-act="cihaz-hepsi">Hepsinden çıkış yap</button>' : "") + '</div><p class="small muted" style="margin:0 0 10px">Girişte "Bu cihazda beni hatırla" işaretlenen cihazlar 30 gün boyunca şifre sormadan açılır. Kaybolan ya da artık kullanmadığınız bir cihazı buradan kaldırın. Şifrenizi değiştirince diğer cihazlar kendiliğinden çıkış yapar.</p>';
+  if (!L) h += '<div class="empty small">Yükleniyor…</div>';
+  else if (!L.length) h += '<div class="empty small">Hatırlanan cihaz yok.</div>';
+  else h += '<ul class="belge-list">' + L.map(c => '<li><span class="belge-tur">' + ic("telefon") + '</span><div class="bl-ad"><b>' + esc(cihazAdi(c.cihaz)) + (c.bu ? ' <span class="chip ok">Bu cihaz</span>' : "") + '</b><div class="small muted">Son kullanım ' + tarihSaat(c.son_kullanim || c.olusturma) + " · " + fd(String(c.son_kullanma).slice(0, 10)) + ' tarihine kadar</div></div><div class="yap-btn"><button class="btn ghost sm sil" data-cihaz-sil="' + c.id + '">Kaldır</button></div></li>').join("") + "</ul>";
   return h + "</div>";
 }
+
 async function belgeYukle(sahip, files) {
   const [tur, id] = sahip.split(":"), ok = [...files], max = S.pdfMaxMb * 1048576;
   if (!ok.length || S.belgeBusy) return;
@@ -375,7 +417,7 @@ function vPortal() {
   const hs = S.data.hareketler.slice().sort((a, b) => (b.tarih || "").localeCompare(a.tarih || ""));
   h += '<div class="panel"><div class="panel-head"><h2>Ödemelerim</h2><span class="small muted">Size yapılan ödemeler</span></div>' + (!hs.length ? '<div class="empty small">Henüz ödeme yapılmadı.</div>' :
     '<div class="tw"><table><thead><tr><th>Tarih</th><th class="num">Tutar</th><th>Yöntem</th><th>Ödenen faturalar</th></tr></thead><tbody>' + hs.map(x => "<tr><td>" + fd(x.tarih) + '</td><td class="num"><b>' + tl(num(x.tutar)) + "</b></td><td>" + esc(x.yontem || "—") + "</td><td>" + (dagH(x.id).map(d => { const f = S.data.faturalar.find(y => y.id === d.faturaId); return f ? esc(f.no || fd(f.tarih)) + " (" + tl(num(d.tutar)) + ")" : ""; }).filter(Boolean).join(", ") || '<span class="muted">—</span>') + "</td></tr>").join("") + "</tbody></table></div>") + "</div>";
-  h += '<div class="panel" style="max-width:520px"><h2>Şifremi değiştir</h2><form id="pw-form" class="form" style="grid-template-columns:1fr"><label class="f">Mevcut şifre<input type="password" id="pw-old" autocomplete="current-password" required></label><label class="f">Yeni şifre (en az 10 karakter)<input type="password" id="pw-new" autocomplete="new-password" minlength="10" required></label><div><button class="btn" type="submit">Şifreyi değiştir</button></div></form></div>';
+  h += '<div class="grid2 portal-alt"><div>' + cihazPanel() + '</div><div class="panel"><h2>Şifremi değiştir</h2><form id="pw-form" class="form" style="grid-template-columns:1fr"><label class="f">Mevcut şifre<input type="password" id="pw-old" autocomplete="current-password" required></label><label class="f">Yeni şifre (en az 10 karakter)<input type="password" id="pw-new" autocomplete="new-password" minlength="10" required></label><div><button class="btn" type="submit">Şifreyi değiştir</button></div></form></div></div>';
   return h;
 }
 function fs_sayi() { return S.data.faturalar.length; }
@@ -675,7 +717,7 @@ function cariFaturaTable(id, c) {
     const tarihler = [...new Set(ops.map(x => x.h.tarih))];
     h += '<tr class="click fat-row' + gecSinif(f) + (on ? " selected" : "") + (ac ? " open" : "") + '" data-fac="' + f.id + '" aria-expanded="' + ac + '">' + (sel ? '<td class="sel"><input type="checkbox" data-sel="fat" value="' + f.id + '" aria-label="Faturayı seç"' + (on ? " checked" : "") + "></td>" : "") +
       '<td style="white-space:nowrap"><span class="caret" aria-hidden="true">▸</span> ' + fd(f.tarih) + vadeHtml(f) + "</td>" +
-      "<td><b>" + esc(f.no || "—") + "</b> " + pdfLink(f) + kaynakChip(f) + (f.aciklama ? '<div class="small muted">' + esc(f.aciklama) + "</div>" : "") + (f.donem ? '<div class="small muted">Dönem: ' + ymLabel(f.donem) + "</div>" : "") + "</td>" +
+      "<td><b>" + esc(f.no || "—") + "</b> " + pdfLink(f) + kaynakChip(f) + ekChip(f) + (f.aciklama ? '<div class="small muted">' + esc(f.aciklama) + "</div>" : "") + (f.donem ? '<div class="small muted">Dönem: ' + ymLabel(f.donem) + "</div>" : "") + "</td>" +
       '<td class="num">' + tl(cf.net) + '<div class="small muted kdvli">KDV hariç ' + tl(cf.matrah) + "</div></td>" +
       '<td class="num">' + (od > 0.004 ? tl(od) : "—") + '</td><td class="num">' + (kal > 0.004 ? "<b>" + tl(kal) + "</b>" : "—") + "</td>" +
       '<td style="white-space:nowrap">' + (tarihler.length ? fd(tarihler[tarihler.length - 1]) + (tarihler.length > 1 ? '<div class="small muted">' + ops.length + " " + odeAd.toLocaleLowerCase("tr") + "</div>" : "") : '<span class="muted">—</span>') + "</td>" +
@@ -687,6 +729,8 @@ function cariFaturaTable(id, c) {
         ops.map(x => "<tr><td>" + fd(x.h.tarih) + "</td><td>" + esc(x.h.yontem || "") + '</td><td class="small">' + esc(x.h.aciklama || "") + '</td><td class="num"><b>' + tl(x.d.tutar) + '</b></td><td class="num muted">' + tl(num(x.h.tutar)) + "</td>" + (S.canWrite ? '<td class="num" style="white-space:nowrap"><button class="btn ghost sm" data-edit="hareket:' + x.h.id + '">Düzenle</button><button class="btn ghost sm sil" data-sil="hareket:' + x.h.id + '">Sil</button></td>' : "") + "</tr>").join("") +
         '</tbody><tfoot><tr><td colspan="3">Toplam ' + (g ? "ödenen" : "tahsil edilen") + '</td><td class="num">' + tl(od) + '</td><td colspan="' + (S.canWrite ? 2 : 1) + '" class="num">' + (kal > 0.004 ? "Kalan " + tl(kal) : "") + "</td></tr></tfoot></table>"
         : '<div class="small muted">Bu faturaya henüz ' + odeAd.toLocaleLowerCase("tr") + " bağlanmadı.</div>";
+      const ek = ekSayisi("fatura", f.id);
+      if (S.canWrite || ek.n || ek.b) d += '<div class="fd-ek" data-belge-hedef="fatura:' + f.id + '"><div class="fd-ek-bas"><b>Notlar ve ekler</b>' + belgeEkleBtn("fatura", f.id, true) + "</div>" + notlarHtml("fatura", f.id, true) + belgeListe("fatura", f.id, true) + "</div>";
       if (S.canWrite) d += '<div class="actions">' + (kal > 0.004 ? '<button class="btn primary sm" data-act="pay-fatura" data-id="' + f.id + '">+ ' + odeAd + " ekle</button>" : "") + '<button class="btn sm" data-edit="fatura:' + f.id + '">Faturayı düzenle</button><button class="btn sm danger" data-sil="fatura:' + f.id + '">Faturayı sil</button></div>';
       h += d + "</div></td></tr>";
     }
@@ -730,7 +774,7 @@ function vCari(id) {
     selBar += '<div class="banner"><span><b>' + tl(bt) + " tutarında " + (c.tip === "personel" ? "ödeme" : "tahsilat") + ' hiçbir faturaya bağlı değil.</b> Eskiden yeniye açık faturalara otomatik eşleştirebilirsiniz.</span><button class="btn" data-act="auto-match" data-id="' + id + '">Faturalarla eşleştir</button></div>';
   }
   h += selBar + '<div class="panel"><div class="panel-head"><h2>Faturalar</h2><span class="small muted">En yeni fatura en üstte · ' + (c.tip === "personel" ? "ödeme" : "tahsilat") + ' detayı için faturaya tıklayın</span>' + (Object.keys(S.acikFat).length ? '<button class="btn ghost sm noprint" data-act="fat-kapat">Tümünü kapat</button>' : '<button class="btn ghost sm noprint" data-act="fat-ac">Tümünü aç</button>') + "</div>" + cariFaturaTable(id, c) + "</div>";
-  h += belgePanel("cari", id);
+  h += ekPanel("cari", id);
   return h;
 }
 
@@ -788,7 +832,7 @@ function vProje(id) {
   const tum = movements(null, id), ayir = musteri => { let run = 0; return tum.filter(r => r.kind === "fatura" ? (r.rec.tur === "kesilen") === musteri : (r.rec.tur === "tahsilat") === musteri).map(r => { run = r2(run + r.borc - r.alacak); return Object.assign({}, r, { bakiye: run }); }); };
   const mR = ayir(true), gR = ayir(false);
   h += '<div class="panel"><div class="panel-head"><h2>Müşteri: faturalar ve tahsilatlar</h2><span class="small muted">Bakiye: müşteriden tahsil edilecek kalan</span></div>' + (mR.length ? ekstreTable(mR, true) : '<div class="empty small">Bu projeye kesilmiş fatura yok.</div>') + "</div>";
-  h += belgePanel("proje", id);
+  h += ekPanel("proje", id);
   return h + '<div class="panel"><div class="panel-head"><h2>Giderler: personel faturaları ve ödemeler</h2><span class="small muted">Bakiye: personele ödenecek kalan</span></div>' + (gR.length ? ekstreTable(gR, true) : '<div class="empty small">Bu projeye bağlı gider faturası yok.</div>') + "</div>";
 }
 
@@ -814,7 +858,7 @@ function vFatura() {
     const c = calcF(f); tm += c.matrah; tk += c.kdv; tn += c.net;
     const fp = f.projeId || f.personelId ? [] : faturaPersonelleri(f);
     const link = f.projeId ? "Proje: " + esc((proje(f.projeId) || {}).ad || "—") : f.personelId ? "Personel: " + esc(cariAd(f.personelId)) : fp.length ? "Personel: " + esc(fp.map(x => cariAd(x.pid)).join(", ")) + " (açıklamadan)" : "";
-    h += '<tr class="click' + gecSinif(f) + '" data-edit="fatura:' + f.id + '"><td style="white-space:nowrap">' + fd(f.tarih) + vadeHtml(f) + '</td><td><span class="chip ' + (f.tur === "kesilen" ? "out" : "in") + '">' + (f.tur === "kesilen" ? "Kesilen" : "Gelen") + "</span></td><td class=\"cari-td\">" + esc(cariAd(f.cariId)) + (link ? '<div class="small muted">' + link + "</div>" : "") + "</td><td>" + esc(f.no || "") + " " + pdfLink(f) + kaynakChip(f) + '</td><td style="white-space:nowrap">' + ymLabel(f.donem) + '</td><td class="num">' + tl(c.matrah) + '</td><td class="num">' + tl(c.kdv) + (c.tevkif ? '<div class="small muted">Tevk. −' + tl(c.tevkif) + "</div>" : "") + '</td><td class="num">' + tl(c.net) + "</td><td>" + durumChipF(f) + '</td><td class="num">' + (kalanF(f) > 0.004 ? tl(kalanF(f)) : "—") + "</td></tr>"; tkal += Math.max(0, kalanF(f));
+    h += '<tr class="click' + gecSinif(f) + '" data-edit="fatura:' + f.id + '"><td style="white-space:nowrap">' + fd(f.tarih) + vadeHtml(f) + '</td><td><span class="chip ' + (f.tur === "kesilen" ? "out" : "in") + '">' + (f.tur === "kesilen" ? "Kesilen" : "Gelen") + "</span></td><td class=\"cari-td\">" + esc(cariAd(f.cariId)) + (link ? '<div class="small muted">' + link + "</div>" : "") + "</td><td>" + esc(f.no || "") + " " + pdfLink(f) + kaynakChip(f) + ekChip(f) + '</td><td style="white-space:nowrap">' + ymLabel(f.donem) + '</td><td class="num">' + tl(c.matrah) + '</td><td class="num">' + tl(c.kdv) + (c.tevkif ? '<div class="small muted">Tevk. −' + tl(c.tevkif) + "</div>" : "") + '</td><td class="num">' + tl(c.net) + "</td><td>" + durumChipF(f) + '</td><td class="num">' + (kalanF(f) > 0.004 ? tl(kalanF(f)) : "—") + "</td></tr>"; tkal += Math.max(0, kalanF(f));
   });
   return h + '</tbody><tfoot><tr><td colspan="5">' + list.length + ' fatura</td><td class="num">' + tl(tm) + '</td><td class="num">' + tl(tk) + '</td><td class="num">' + tl(tn) + '</td><td></td><td class="num">' + tl(tkal) + "</td></tr></tfoot></table></div></div>";
 }
@@ -1117,6 +1161,7 @@ async function saveImports() {
 /* ---------- ayarlar ---------- */
 function vAyar() {
   let h = '<div class="top"><div><h1>Ayarlar</h1><div class="sub">' + esc(S.me.ad) + " · " + (S.canWrite ? "Yönetici" : "Salt okunur") + '</div></div><div class="actions"><button class="btn" data-act="logout">Çıkış yap</button></div></div>';
+  h += cihazPanel();
   h += kuruluMu() ? "" : '<div class="panel"><div class="panel-head"><h2>Telefona kur</h2></div><p class="small" style="margin:0 0 12px">Uygulamayı telefonunuzun ana ekranına ekleyin; kendi ikonuyla tam ekran açılır. Kayıtlar yine sunucuda tutulur, telefonda saklanmaz. Logo yüklediyseniz ikon olarak logonuz görünür.</p>' + kurulumYolu() + "</div>";
   if (S.canWrite) h += firmaPanel() + '<div class="panel"><div class="panel-head"><h2>Yedekleme</h2><span class="small muted">' + (S.ay.son_yedek ? "Son yedek: " + esc(S.ay.son_yedek) : "Henüz yedek alınmadı") + '</span></div><p class="small" style="margin:0 0 12px">Veritabanının tamamı (SQL) ve tüm fatura belgeleri tek zip dosyası olarak bilgisayarınıza iner. Ayda en az bir kez alıp sunucu dışında saklayın; 30 günü geçince Özet\'te hatırlatılır.</p><button class="btn primary" data-act="yedek">Tam yedeği indir</button></div>' +
     '<div class="panel"><div class="panel-head"><h2>Uygulama güncelleme</h2><span class="small muted">Kurulu sürüm ' + esc(String(window.CARI_SURUM || "")) + '</span></div><p class="small" style="margin:0 0 12px">Size gönderilen güncelleme zip dosyasını buradan yükleyin; sunucu paneline girmeniz gerekmez. Veritabanı ayarları (config.php), kayıtlarınız ve fatura belgeleri değişmez. Mevcut sürümün yedeği otomatik alınır.</p>' +
@@ -1176,6 +1221,7 @@ async function logoYukle(file) {
   try { const j = await api("logo_yukle", { form: f }); ayarUygula(j.ayarlar); toast("Logo güncellendi"); } catch (e) { toast(e.message); }
 }
 async function loadAyar() {
+  loadCihazlar();
   if (!S.canWrite) return;
   try { const [u, l] = await Promise.all([api("users"), api("log")]); S.users = u.users; S.log = l.log; } catch (e) { toast(e.message); }
   if (S.view === "ayar") render();
@@ -1928,6 +1974,8 @@ document.addEventListener("click", e => {
   if (t.dataset.gitfat) { gitFatura(t.dataset.gitfat); return; }
   if (t.dataset.sil) { const [k, id] = t.dataset.sil.split(":"); const rec = S.data[k === "fatura" ? "faturalar" : "hareketler"].find(x => x.id === id); if (rec) { openModal(k, rec); rerenderModal(M => { M.confirmDel = true; }); } return; }
   if (t.dataset.belgeSil) { belgeSil(t.dataset.belgeSil); return; }
+  if (t.dataset.notSil) { notSil(t.dataset.notSil); return; }
+  if (t.dataset.cihazSil) { api("cihaz_sil", { body: { id: t.dataset.cihazSil } }).then(() => { toast("Cihaz kaldırıldı"); loadCihazlar(); }).catch(er => toast(er.message)); return; }
   if (t.dataset.pSil) { portalSil(t.dataset.pSil); return; }
   if (t.dataset.yapsil) { yapGizle(t.dataset.yapsil); return; }
   if (t.dataset.yap) { S.yapAcik[t.dataset.yap] = !S.yapAcik[t.dataset.yap]; render(); return; }
@@ -1980,6 +2028,7 @@ document.addEventListener("click", e => {
   else if (a === "print") window.print();
   else if (a === "csv-rapor") raporCsv();
   else if (a === "csv-kdv") kdvExcel();
+  else if (a === "cihaz-hepsi") api("cihaz_sil", { body: { id: 0 } }).then(() => { toast("Tüm hatırlanan cihazlardan çıkış yapıldı"); loadCihazlar(); }).catch(er => toast(er.message));
   else if (a === "mutabakat") mutabakatModal(t.dataset.id);
   else if (a === "p-yeni") { S.pForm = S.pForm || {}; render(); pfHesap(); window.scrollTo(0, 0); }
   else if (a === "p-iptal") { S.pForm = null; render(); }
@@ -2015,6 +2064,7 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("submit", async e => {
   e.preventDefault();
+  if (e.target.classList.contains("not-form")) { const ta = e.target.querySelector("textarea"); notEkle(e.target.dataset.notSahip, ta.value); return; }
   if (e.target.id === "m-form") saveModal();
   else if (e.target.id === "firma-form") firmaKaydet();
   else if (e.target.id === "b-form") saveBulk();
@@ -2081,7 +2131,7 @@ document.addEventListener("change", e => {
   if (id === "r-bas") { S.rBas = e.target.value; render(); }
   if (id === "r-bit") { S.rBit = e.target.value; render(); }
   if (id === "a-logokoyu") document.documentElement.setAttribute("data-logo-koyu", e.target.value);
-  if (id === "belge-in" && e.target.files.length) { belgeYukle(e.target.dataset.belgeSahip, e.target.files); e.target.value = ""; return; }
+  if (e.target.classList && e.target.classList.contains("belge-in") && e.target.files.length) { belgeYukle(e.target.dataset.belgeSahip, e.target.files); e.target.value = ""; return; }
   if (id === "p-dosya" && e.target.files[0]) { const f = e.target.files[0]; e.target.value = ""; if (S.pForm) { S.pForm.no = v("pf-no") || S.pForm.no; } portalDosya(f); return; }
   if (id === "pf-kdv") { pfHesap(); return; }
   if (id === "a-guncelle" && e.target.files[0]) { guncellemeYukle(e.target.files[0]); e.target.value = ""; return; }
@@ -2140,7 +2190,7 @@ window.addEventListener("beforeunload", e => { if (S.imp.some(r => r.st !== "ok"
       const b = await api("benim");
       S.pk = b.kart;
       S.data = { cariler: [Object.assign({ tip: "personel", durum: "aktif", musteriId: "" }, b.kart)], projeler: [], faturalar: b.faturalar, hareketler: b.hareketler, dagitim: b.dagitim, belgeler: [] };
-      S.loaded = true; render(); return;
+      S.loaded = true; render(); loadCihazlar(); return;
     }
     const all = await api("all");
     COLS.forEach(c => S.data[c] = all.data[c] || []);
@@ -2148,7 +2198,9 @@ window.addEventListener("beforeunload", e => { if (S.imp.some(r => r.st !== "ok"
     S.data.belgeler = all.data.belgeler || [];
     S.loaded = true;
     const h = location.hash.slice(1); if (navItems().some(([k]) => k === h)) S.view = h;
+    S.data.notlar = all.data.notlar || [];
     render();
+    if (S.view === "ayar") loadAyar();
     const vl = vadeAktif(), gec = vl.filter(x => x.gun < 0).length, yak = vl.length - gec;
     if (vl.length) toast((gec ? gec + " faturanın vadesi geçti" : "") + (gec && yak ? ", " : "") + (yak ? yak + " faturanın vadesi yaklaşıyor" : "") + " · Özet > Yapılacaklar");
   } catch (e) {

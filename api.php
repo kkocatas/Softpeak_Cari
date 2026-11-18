@@ -438,7 +438,7 @@ function personel_islem(string $a, array $user, string $method): void {
         case 'me':
             out(['ok' => true, 'user' => $user, 'csrf' => $_SESSION['csrf'], 'ayarlar' => array_intersect_key(ayarlar_genel(), array_flip(['firma_ad', 'uygulama_ad', 'logo_surum', 'logo_koyu', 'kdv_oranlari', 'varsayilan_kdv'])), 'pdfMaxMb' => min((int)cfg('pdf_max_mb', 20), (int)(ini_bytes(ini_get('upload_max_filesize') ?: '2M') / 1048576) ?: 20)]);
         case 'logout':
-            $_SESSION = []; session_destroy(); out(['ok' => true]);
+            hatirla_bu_cihaz_sil(); $_SESSION = []; session_destroy(); out(['ok' => true]);
         case 'benim':
             $st = db()->prepare("SELECT * FROM faturalar WHERE cari_id = ? AND tur = 'gelen' ORDER BY tarih, id"); $st->execute([$cid]);
             $fat = array_map('personel_fatura_api', $st->fetchAll());
@@ -484,6 +484,14 @@ function personel_islem(string $a, array $user, string $method): void {
             send_fatura_belgesi($kendi((int)($_GET['id'] ?? 0)));
         case 'password':
             sifre_degistir($user);
+        case 'cihazlar':
+            $st = db()->prepare('SELECT id, cihaz, olusturma, son_kullanim, son_kullanma FROM oturum_hatirla WHERE kullanici_id = ? AND son_kullanma > NOW() ORDER BY COALESCE(son_kullanim, olusturma) DESC'); $st->execute([$user['id']]);
+            out(['ok' => true, 'cihazlar' => array_map(fn($r) => $r + ['bu' => (int)$r['id'] === (int)($_SESSION['hatirla_id'] ?? 0)], $st->fetchAll())]);
+        case 'cihaz_sil':
+            $id = (int)(body()['id'] ?? 0);
+            if ($id) db()->prepare('DELETE FROM oturum_hatirla WHERE id = ? AND kullanici_id = ?')->execute([$id, $user['id']]);
+            else db()->prepare('DELETE FROM oturum_hatirla WHERE kullanici_id = ?')->execute([$user['id']]);
+            out(['ok' => true]);
         default:
             fail('Bu işlem için yetkiniz yok.', 403);
     }
@@ -494,8 +502,14 @@ function sifre_degistir(array $user): void {
     if (!password_verify((string)($b['eski'] ?? ''), (string)$st->fetchColumn())) fail('Mevcut şifre hatalı.');
     if (mb_strlen((string)($b['yeni'] ?? '')) < 10) fail('Yeni şifre en az 10 karakter olmalı.');
     db()->prepare('UPDATE kullanicilar SET sifre_hash = ? WHERE id = ?')->execute([password_hash((string)$b['yeni'], PASSWORD_DEFAULT), $user['id']]);
+    try { db()->prepare('DELETE FROM oturum_hatirla WHERE kullanici_id = ? AND id <> ?')->execute([$user['id'], (int)($_SESSION['hatirla_id'] ?? 0)]); } catch (PDOException $e) {}
     out(['ok' => true]);
 }
+
+/* ---------- notlar ---------- */
+function not_api(array $r): array { return ['id' => (string)$r['id'], 'sahipTur' => $r['sahip_tur'], 'sahipId' => (string)$r['sahip_id'], 'metin' => $r['metin'], 'yazan' => (string)($r['yazan'] ?? ''), 'tarih' => (string)$r['olusturma']]; }
+function sahip_tablosu(string $tur): ?string { return ['cari' => 'cariler', 'proje' => 'projeler', 'fatura' => 'faturalar'][$tur] ?? null; }
+function ekleri_sil(string $tur, int $id): void { belgeleri_sil($tur, $id); db()->prepare('DELETE FROM notlar WHERE sahip_tur = ? AND sahip_id = ?')->execute([$tur, $id]); }
 
 /** Tüm tabloların yapısı ve kayıtları (phpMyAdmin ile içe aktarılabilir SQL). */
 function sql_dump(): string {
@@ -634,6 +648,7 @@ if ($a === 'login' && $method === 'POST') {
     session_regenerate_id(true);
     $_SESSION['uid'] = (int)$u['id']; $_SESSION['son'] = time(); $_SESSION['csrf'] = bin2hex(random_bytes(24));
     db()->prepare('UPDATE kullanicilar SET son_giris = NOW() WHERE id = ?')->execute([$u['id']]);
+    if (!empty($b['hatirla'])) { try { ensure_schema(); hatirla_olustur((int)$u['id']); } catch (Throwable $t) { error_log('Cari Takip hatırla: ' . $t->getMessage()); } }
     out(['ok' => true]);
 }
 
@@ -656,13 +671,24 @@ switch ($a) {
         out(['ok' => true, 'user' => $user, 'csrf' => $_SESSION['csrf'], 'ayarlar' => ayarlar_genel(), 'pdfMaxMb' => min((int)cfg('pdf_max_mb', 20), (int)(ini_bytes(ini_get('upload_max_filesize') ?: '2M') / 1048576) ?: 20)]);
 
     case 'logout':
-        $_SESSION = []; session_destroy(); out(['ok' => true]);
+        hatirla_bu_cihaz_sil(); $_SESSION = []; session_destroy(); out(['ok' => true]);
+
+    case 'cihazlar':
+        $st = db()->prepare('SELECT id, cihaz, olusturma, son_kullanim, son_kullanma FROM oturum_hatirla WHERE kullanici_id = ? AND son_kullanma > NOW() ORDER BY COALESCE(son_kullanim, olusturma) DESC'); $st->execute([$user['id']]);
+        out(['ok' => true, 'cihazlar' => array_map(fn($r) => $r + ['bu' => (int)$r['id'] === (int)($_SESSION['hatirla_id'] ?? 0)], $st->fetchAll())]);
+
+    case 'cihaz_sil':
+        $id = (int)(body()['id'] ?? 0);
+        if ($id) db()->prepare('DELETE FROM oturum_hatirla WHERE id = ? AND kullanici_id = ?')->execute([$id, $user['id']]);
+        else db()->prepare('DELETE FROM oturum_hatirla WHERE kullanici_id = ?')->execute([$user['id']]);
+        out(['ok' => true]);
 
     case 'all':
         $r = [];
         foreach (array_keys(ENT) as $t) $r[$t] = array_map(fn($row) => to_api($t, $row), db()->query("SELECT * FROM {$t} ORDER BY id")->fetchAll());
         $r['dagitim'] = array_map('dagitim_api', db()->query('SELECT id, hareket_id, fatura_id, tutar FROM odeme_dagitim ORDER BY id')->fetchAll());
         $r['belgeler'] = array_map('belge_api', db()->query('SELECT * FROM belgeler ORDER BY olusturma DESC, id DESC')->fetchAll());
+        $r['notlar'] = array_map('not_api', db()->query('SELECT n.*, k.ad AS yazan FROM notlar n LEFT JOIN kullanicilar k ON k.id = n.kullanici_id ORDER BY n.olusturma DESC, n.id DESC')->fetchAll());
         out(['ok' => true, 'data' => $r]);
 
     case 'save':
@@ -692,7 +718,7 @@ switch ($a) {
             throw $ex;
         }
         if ($t === 'faturalar' && !empty($old['pdf_yol'])) remove_pdf_file($old['pdf_yol']);
-        if ($t === 'cariler' || $t === 'projeler') belgeleri_sil($t === 'cariler' ? 'cari' : 'proje', $id);
+        if (in_array($t, ['cariler', 'projeler', 'faturalar'], true)) ekleri_sil(['cariler' => 'cari', 'projeler' => 'proje', 'faturalar' => 'fatura'][$t], $id);
         audit($t, $id, 'sil', $old, null);
         out(['ok' => true]);
 
@@ -732,7 +758,7 @@ switch ($a) {
     case 'belge_yukle':
         $needAdmin();
         $tur = $_POST['sahip_tur'] ?? ''; $sid = (int)($_POST['sahip_id'] ?? 0);
-        if (!in_array($tur, ['cari', 'proje'], true) || !fetch_row($tur === 'cari' ? 'cariler' : 'projeler', $sid)) fail('Belgenin ekleneceği kayıt bulunamadı.', 404);
+        if (!($tab = sahip_tablosu($tur)) || !fetch_row($tab, $sid)) fail('Belgenin ekleneceği kayıt bulunamadı.', 404);
         $f = $_FILES['dosya'] ?? [];
         if ($err = upload_error($f)) fail(str_replace('PDF dosyası', 'Dosya', $err));
         if (!is_uploaded_file($f['tmp_name'])) fail('Dosya yüklenemedi.');
@@ -768,6 +794,25 @@ switch ($a) {
         if ($ext !== 'pdf') header("Content-Security-Policy: default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
         header('Cache-Control: private, no-store');
         readfile($p); exit;
+
+    case 'not_ekle':
+        $needAdmin();
+        $b = body(); $tur = (string)($b['sahipTur'] ?? ''); $sid = (int)($b['sahipId'] ?? 0); $metin = trim((string)($b['metin'] ?? ''));
+        if (!($tab = sahip_tablosu($tur)) || !fetch_row($tab, $sid)) fail('Notun ekleneceği kayıt bulunamadı.', 404);
+        if ($metin === '') fail('Not boş olamaz.');
+        if (mb_strlen($metin) > 2000) fail('Not en fazla 2000 karakter olabilir.');
+        db()->prepare('INSERT INTO notlar (sahip_tur, sahip_id, metin, kullanici_id) VALUES (?,?,?,?)')->execute([$tur, $sid, $metin, $user['id']]);
+        $nid = (int)db()->lastInsertId();
+        audit('notlar', $nid, 'ekle', null, ['sahip' => "$tur:$sid"]);
+        $st = db()->prepare('SELECT n.*, k.ad AS yazan FROM notlar n LEFT JOIN kullanicilar k ON k.id = n.kullanici_id WHERE n.id = ?'); $st->execute([$nid]);
+        out(['ok' => true, 'rec' => not_api($st->fetch())]);
+
+    case 'not_sil':
+        $needAdmin();
+        $id = (int)(body()['id'] ?? 0);
+        db()->prepare('DELETE FROM notlar WHERE id = ?')->execute([$id]);
+        audit('notlar', $id, 'sil', null, null);
+        out(['ok' => true]);
 
     case 'belge_sil':
         $needAdmin();
@@ -903,7 +948,7 @@ switch ($a) {
         if ($id) {
             if ($id === (int)$user['id'] && $rol !== 'admin') fail('Kendi yönetici yetkinizi kaldıramazsınız.');
             db()->prepare('UPDATE kullanicilar SET ad = ?, rol = ?, cari_id = ? WHERE id = ?')->execute([$ad, $rol, $cariId, $id]);
-            if ($pass !== '') db()->prepare('UPDATE kullanicilar SET sifre_hash = ? WHERE id = ?')->execute([password_hash($pass, PASSWORD_DEFAULT), $id]);
+            if ($pass !== '') { db()->prepare('UPDATE kullanicilar SET sifre_hash = ? WHERE id = ?')->execute([password_hash($pass, PASSWORD_DEFAULT), $id]); db()->prepare('DELETE FROM oturum_hatirla WHERE kullanici_id = ?')->execute([$id]); }
         } else {
             $k = trim((string)($b['kullanici'] ?? ''));
             if (!preg_match('/^[a-zA-Z0-9._-]{3,60}$/', $k)) fail('Kullanıcı adı en az 3 karakter olmalı; harf, rakam, nokta ve tire kullanın.');

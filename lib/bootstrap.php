@@ -53,8 +53,45 @@ function start_session(): void {
     if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(24));
 }
 
+/* ---------- "bu cihazda beni hatırla" ---------- */
+const HATIRLA_CEREZ = 'CARI_HATIRLA';
+const HATIRLA_GUN = 30;
+function cerez_yolu(): string { return rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/') . '/'; }
+function hatirla_cerez(string $deger, int $bitis): void {
+    setcookie(HATIRLA_CEREZ, $deger, ['expires' => $bitis, 'path' => cerez_yolu(), 'secure' => is_https(), 'httponly' => true, 'samesite' => 'Lax']);
+}
+/** Giriş sırasında çağrılır: cihaza 30 gün geçerli, tek kullanıcıya bağlı rastgele bir anahtar verir (veritabanında yalnızca özeti tutulur). */
+function hatirla_olustur(int $uid): void {
+    $secici = bin2hex(random_bytes(12)); $dog = bin2hex(random_bytes(32)); $bitis = time() + HATIRLA_GUN * 86400;
+    $cihaz = mb_substr(preg_replace('/\s+/', ' ', (string)($_SERVER['HTTP_USER_AGENT'] ?? '')), 0, 200);
+    db()->prepare('INSERT INTO oturum_hatirla (kullanici_id, secici, dogrulayici_hash, son_kullanma, cihaz) VALUES (?,?,?,?,?)')
+        ->execute([$uid, $secici, hash('sha256', $dog), date('Y-m-d H:i:s', $bitis), $cihaz]);
+    hatirla_cerez("$secici:$dog", $bitis);
+}
+/** Oturum yoksa cihazdaki anahtarla girişi yeniler. Anahtar geçersizse çerez silinir. */
+function hatirla_dene(): void {
+    $c = (string)($_COOKIE[HATIRLA_CEREZ] ?? '');
+    if (!preg_match('/^([a-f0-9]{24}):([a-f0-9]{64})$/', $c, $m)) return;
+    try {
+        $st = db()->prepare('SELECT * FROM oturum_hatirla WHERE secici = ? AND son_kullanma > NOW()'); $st->execute([$m[1]]);
+        $r = $st->fetch();
+        if (!$r || !hash_equals((string)$r['dogrulayici_hash'], hash('sha256', $m[2]))) { if ($r) db()->prepare('DELETE FROM oturum_hatirla WHERE id = ?')->execute([$r['id']]); hatirla_cerez('', time() - 3600); return; }
+        session_regenerate_id(true);
+        $_SESSION['uid'] = (int)$r['kullanici_id']; $_SESSION['son'] = time(); $_SESSION['csrf'] = bin2hex(random_bytes(24)); $_SESSION['hatirla_id'] = (int)$r['id'];
+        db()->prepare('UPDATE oturum_hatirla SET son_kullanim = NOW() WHERE id = ?')->execute([$r['id']]);
+        db()->prepare('UPDATE kullanicilar SET son_giris = NOW() WHERE id = ?')->execute([$r['kullanici_id']]);
+    } catch (PDOException $e) { /* tablo henüz yoksa (şema güncellenmeden önce) sessizce geç */ }
+}
+/** Bu cihazın anahtarını siler (çıkış). */
+function hatirla_bu_cihaz_sil(): void {
+    $c = (string)($_COOKIE[HATIRLA_CEREZ] ?? '');
+    if (preg_match('/^([a-f0-9]{24}):/', $c, $m)) { try { db()->prepare('DELETE FROM oturum_hatirla WHERE secici = ?')->execute([$m[1]]); } catch (PDOException $e) {} }
+    if ($c !== '') hatirla_cerez('', time() - 3600);
+}
+
 function current_user(): ?array {
     start_session();
+    if (empty($_SESSION['uid'])) hatirla_dene();
     if (empty($_SESSION['uid'])) return null;
     static $u = false;
     if ($u === false) {
@@ -129,7 +166,7 @@ function pdf_root(): string {
 }
 
 /* ---------- veritabanı sürümü (sonradan eklenen tablo/sütunlar) ---------- */
-const SCHEMA_VER = 7;
+const SCHEMA_VER = 8;
 /** Sonradan eklenen tabloları mevcut kurulumlarda oluşturur (oturum başına bir kez). */
 function ensure_schema(): void {
     if (($_SESSION['schema'] ?? 0) >= SCHEMA_VER) return;
@@ -165,6 +202,12 @@ function ensure_schema(): void {
     if (!$kol('kullanicilar', 'cari_id')) db()->exec('ALTER TABLE kullanicilar ADD COLUMN cari_id INT UNSIGNED NULL AFTER rol');
     if (!$kol('faturalar', 'kaynak')) db()->exec("ALTER TABLE faturalar ADD COLUMN kaynak VARCHAR(20) NOT NULL DEFAULT ''");
     db()->exec("CREATE TABLE IF NOT EXISTS belgeler (   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,   sahip_tur ENUM('cari','proje') NOT NULL,   sahip_id INT UNSIGNED NOT NULL,   ad VARCHAR(255) NOT NULL,   aciklama VARCHAR(255) NOT NULL DEFAULT '',   dosya_yol VARCHAR(255) NOT NULL,   boyut INT UNSIGNED NOT NULL DEFAULT 0,   yukleyen INT UNSIGNED NULL,   olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   KEY ix_sahip (sahip_tur, sahip_id) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci");
+    // v8: beni hatırla anahtarları, notlar, faturaya belge eki
+    db()->exec("CREATE TABLE IF NOT EXISTS oturum_hatirla (   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,   kullanici_id INT UNSIGNED NOT NULL,   secici CHAR(24) NOT NULL UNIQUE,   dogrulayici_hash CHAR(64) NOT NULL,   son_kullanma DATETIME NOT NULL,   son_kullanim DATETIME NULL,   cihaz VARCHAR(200) NOT NULL DEFAULT '',   olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   KEY ix_kullanici (kullanici_id),   CONSTRAINT fk_hatirla_kullanici FOREIGN KEY (kullanici_id) REFERENCES kullanicilar(id) ON DELETE CASCADE ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci");
+    db()->exec("CREATE TABLE IF NOT EXISTS notlar (   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,   sahip_tur ENUM('cari','proje','fatura') NOT NULL,   sahip_id INT UNSIGNED NOT NULL,   metin TEXT NOT NULL,   kullanici_id INT UNSIGNED NULL,   olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   KEY ix_sahip (sahip_tur, sahip_id) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci");
+    $st = db()->prepare("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'belgeler' AND COLUMN_NAME = 'sahip_tur'"); $st->execute();
+    if (!str_contains((string)$st->fetchColumn(), 'fatura')) db()->exec("ALTER TABLE belgeler MODIFY sahip_tur ENUM('cari','proje','fatura') NOT NULL");
+    db()->exec('DELETE FROM oturum_hatirla WHERE son_kullanma < NOW()');
     $_SESSION['schema'] = SCHEMA_VER;
     unset($GLOBALS['__ayar_cache']);
 }

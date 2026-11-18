@@ -129,13 +129,36 @@ CREATE TABLE IF NOT EXISTS ayarlar (
 
 CREATE TABLE IF NOT EXISTS belgeler (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  sahip_tur ENUM('cari','proje') NOT NULL,
+  sahip_tur ENUM('cari','proje','fatura') NOT NULL,
   sahip_id INT UNSIGNED NOT NULL,
   ad VARCHAR(255) NOT NULL,
   aciklama VARCHAR(255) NOT NULL DEFAULT '',
   dosya_yol VARCHAR(255) NOT NULL,
   boyut INT UNSIGNED NOT NULL DEFAULT 0,
   yukleyen INT UNSIGNED NULL,
+  olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_sahip (sahip_tur, sahip_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE IF NOT EXISTS oturum_hatirla (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  kullanici_id INT UNSIGNED NOT NULL,
+  secici CHAR(24) NOT NULL UNIQUE,
+  dogrulayici_hash CHAR(64) NOT NULL,
+  son_kullanma DATETIME NOT NULL,
+  son_kullanim DATETIME NULL,
+  cihaz VARCHAR(200) NOT NULL DEFAULT '',
+  olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY ix_kullanici (kullanici_id),
+  CONSTRAINT fk_hatirla_kullanici FOREIGN KEY (kullanici_id) REFERENCES kullanicilar(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;
+
+CREATE TABLE IF NOT EXISTS notlar (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  sahip_tur ENUM('cari','proje','fatura') NOT NULL,
+  sahip_id INT UNSIGNED NOT NULL,
+  metin TEXT NOT NULL,
+  kullanici_id INT UNSIGNED NULL,
   olusturma DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY ix_sahip (sahip_tur, sahip_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_turkish_ci;

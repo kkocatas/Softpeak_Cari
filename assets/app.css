@@ -590,3 +590,28 @@ table.kdvtab th{white-space:normal;line-height:1.25;vertical-align:bottom}
   .belge-list li{flex-wrap:wrap}.belge-list .yap-btn{margin-left:56px}
   .panel.belge-panel{padding:16px}
 }
+
+/* ================= sürüm 31: notlar, ekler, beni hatırla ================= */
+.auth .f.chk.hatirla{font-size:13px;font-weight:500;color:var(--fg-2)}
+.auth .f.chk.hatirla input{width:16px;height:16px;accent-color:var(--accent)}
+.ek-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px}
+.ek-grid h3{font-size:13px;font-weight:600;color:var(--fg-2);margin:0 0 8px}
+.not-form{display:flex;flex-direction:column;gap:8px;align-items:flex-start;margin-bottom:10px}
+.not-form textarea{min-height:0}
+.not-list{list-style:none;margin:0;padding:0}
+.not-list li{padding:10px 12px;border-radius:10px;background:var(--sunk);margin-bottom:8px}
+.not-metin{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px;line-height:1.5;margin-bottom:4px}
+.sil-link{font-size:12px;color:var(--debit)}
+.fd-ek{border-top:1px dashed var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px}
+.fd-ek-bas{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}
+.fd-ek .not-form{flex-direction:row;align-items:flex-end}
+.fd-ek .not-form textarea{flex:1}
+.fd-ek .not-list li{background:var(--surface);border:1px solid var(--line-2)}
+.belge-list.kompakt li{padding:6px 0}
+.belge-list.kompakt .belge-tur{width:36px;height:36px;font-size:9.5px}
+.ek-panel.over,.fd-ek.over{outline:2px dashed var(--accent);outline-offset:4px;background:var(--accent-soft)}
+.belge-tur svg.i{width:20px;height:20px}
+.chip.ek-chip{font-size:11px;padding:3px 8px;vertical-align:1px}
+.portal-alt{align-items:start}
+@media (max-width:900px){.ek-grid{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:720px){.fd-ek .not-form{flex-direction:column;align-items:stretch}}
