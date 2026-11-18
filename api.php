@@ -939,6 +939,7 @@ switch ($a) {
         $b = body();
         $id = (int)($b['id'] ?? 0);
         $rol = in_array($b['rol'] ?? '', ['admin', 'okur', 'personel'], true) ? $b['rol'] : 'okur';
+        if ($rol === 'okur' && (int)($b['cariId'] ?? 0) > 0) $rol = 'personel'; // personel kartı seçildiyse yetki personeldir
         $cariId = null;
         if ($rol === 'personel') {
             $cariId = (int)($b['cariId'] ?? 0);

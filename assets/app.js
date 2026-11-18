@@ -1465,7 +1465,7 @@ function userModal(u) {
   root.innerHTML = '<div class="overlay" data-m="bg"><form class="modal" id="u-form" role="dialog" aria-modal="true" aria-label="Kullanıcı"><div class="modal-head"><h2>' + (nu ? "Yeni kullanıcı" : esc(u.ad)) + '</h2><button type="button" class="btn ghost" data-m="close" aria-label="Kapat">✕</button></div><div class="form">' +
     '<label class="f">Kullanıcı adı<input id="u-k" value="' + esc(u.kullanici) + '"' + (nu ? "" : " disabled") + ' autocomplete="off"></label><label class="f">Ad soyad<input id="u-ad" value="' + esc(u.ad) + '"></label>' +
     '<label class="f">Yetki<select id="u-rol">' + opt("okur", "Salt okunur (mali müşavir)", u.rol) + opt("admin", "Yönetici", u.rol) + opt("personel", "Personel (yalnız kendi faturaları)", u.rol) + '</select><span class="small warn-txt" id="u-rol-uyari"' + (u.rol === "okur" ? "" : " hidden") + '>Salt okunur kullanıcı Müşteri A/G dahil tüm kayıtları görür. Personel için "Personel" seçin.</span></label>' +
-    '<label class="f" id="u-cari-alan"' + (u.rol === "personel" ? "" : " hidden") + '>Personel kartı<select id="u-cari"><option value="">— Seçin —</option>' + S.data.cariler.filter(c => c.tip === "personel").sort((a, b) => a.ad.localeCompare(b.ad, "tr")).map(c => opt(c.id, c.ad, String(u.cari_id || ""))).join("") + '</select><span class="small muted">Personel yalnızca bu karta ait faturaları ve ödemeleri görür; Müşteri A/G ve diğer kayıtları göremez.' + (nu ? " Kart seçilince ad soyad, kullanıcı adı (e-posta) ve ilk şifre (TCKN / VKN) karttan doldurulur." : "") + '</span><span class="small" id="u-cari-uyari" hidden></span></label><label class="f">' + (nu ? "Şifre" : "Yeni şifre (değiştirmeyecekseniz boş bırakın)") + '<input type="' + (nu ? "text" : "password") + '" id="u-p" autocomplete="' + (nu ? "off" : "new-password") + '" spellcheck="false"></label>' +
+    '<label class="f" id="u-cari-alan">Personel kartı<select id="u-cari"><option value="">— Personel değil —</option>' + S.data.cariler.filter(c => c.tip === "personel").sort((a, b) => a.ad.localeCompare(b.ad, "tr")).map(c => opt(c.id, c.ad, String(u.cari_id || ""))).join("") + '</select><span class="small muted">Personel yalnızca bu karta ait faturaları ve ödemeleri görür; Müşteri A/G ve diğer kayıtları göremez.' + (nu ? " Kart seçilince ad soyad, kullanıcı adı (e-posta) ve ilk şifre (TCKN / VKN) karttan doldurulur." : "") + '</span><span class="small" id="u-cari-uyari" hidden></span></label><label class="f">' + (nu ? "Şifre" : "Yeni şifre (değiştirmeyecekseniz boş bırakın)") + '<input type="' + (nu ? "text" : "password") + '" id="u-p" autocomplete="' + (nu ? "off" : "new-password") + '" spellcheck="false"></label>' +
     (u.id == (S.me && S.me.id) ? "" : '<label class="f chk"><input type="checkbox" id="u-degis"' + (nu ? " checked" : "") + '> İlk girişte şifresini değiştirmesi zorunlu olsun</label>') + '</div><div class="err" id="u-err" hidden></div>' +
     '<div class="modal-foot">' + (nu || u.id == S.me.id ? "" : '<button type="button" class="btn danger" id="u-del" data-id="' + u.id + '">Kullanıcıyı sil</button>') + '<div class="r"><button type="button" class="btn" data-m="close">Vazgeç</button><button class="btn primary" type="submit">Kaydet</button></div></div><input type="hidden" id="u-id" value="' + (u.id || "") + '"></form></div>';
 }
@@ -2098,7 +2098,7 @@ document.addEventListener("submit", async e => {
     try { await api("password", { body: { eski: v("pw-old"), yeni: v("pw-new") } }); e.target.reset(); toast("Şifreniz değiştirildi"); if (S.sifreZorunlu) { location.reload(); } } catch (er) { toast(er.message); }
   } else if (e.target.id === "u-form") {
     const err = document.getElementById("u-err"); err.hidden = true;
-    try { await api("user_save", { body: { id: v("u-id"), kullanici: v("u-k").trim(), ad: v("u-ad").trim(), rol: v("u-rol"), cariId: v("u-rol") === "personel" ? v("u-cari") : "", sifre: v("u-p"), sifreDegis: !!(document.getElementById("u-degis") || {}).checked } }); closeModal(); toast("Kullanıcı kaydedildi"); loadAyar(); }
+    try { await api("user_save", { body: { id: v("u-id"), kullanici: v("u-k").trim(), ad: v("u-ad").trim(), rol: v("u-rol"), cariId: v("u-rol") === "admin" ? "" : v("u-cari"), sifre: v("u-p"), sifreDegis: !!(document.getElementById("u-degis") || {}).checked } }); closeModal(); toast("Kullanıcı kaydedildi"); loadAyar(); }
     catch (er) { err.textContent = er.message; err.hidden = false; }
   }
 });
@@ -2118,8 +2118,13 @@ document.addEventListener("keydown", e => {
 let qT;
 document.addEventListener("input", e => {
   const id = e.target.id;
-  if (id === "u-rol") { const al = document.getElementById("u-cari-alan"), uy = document.getElementById("u-rol-uyari"); if (al) al.hidden = e.target.value !== "personel"; if (uy) uy.hidden = e.target.value !== "okur"; if (e.target.value === "personel") personelDoldur(); }
-  if (id === "u-cari") personelDoldur();
+  if (id === "u-rol") { const uy = document.getElementById("u-rol-uyari"), uc = document.getElementById("u-cari"); if (uc && e.target.value !== "personel") uc.value = ""; if (uy) uy.hidden = e.target.value !== "okur"; if (e.target.value === "personel") personelDoldur(); }
+  if (id === "u-cari") {
+    const r = document.getElementById("u-rol"), uy = document.getElementById("u-rol-uyari");
+    if (e.target.value && r) { r.value = "personel"; if (uy) uy.hidden = true; }
+    else if (!e.target.value && r && r.value === "personel") { r.value = "okur"; if (uy) uy.hidden = false; }
+    personelDoldur();
+  }
   if (id === "pf-gun" && S.pk) { const g = num(e.target.value), m = document.getElementById("pf-matrah"); if (g > 0 && m) m.value = nf.format(r2(g * num(S.pk.aylikAlis))); if (S.pForm) S.pForm.gun = e.target.value; pfHesap(); return; }
   if (id === "pf-matrah" || id === "pf-kdv") { pfHesap(); return; }
   if (id === "ara-q" && S.ara) { S.ara.q = e.target.value; S.ara.sel = 0; araCiz(); return; }
