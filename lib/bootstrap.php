@@ -103,6 +103,12 @@ function current_user(): ?array {
             catch (PDOException $e) { $st = null; }
         }
         $u = $st ? ($st->fetch() ?: null) : null;
+        if ($u) {
+            // Güvenli varsayılan: bir personel kartına bağlı hesap, rol sütunu ne derse desin (ör. eski şemada boş kalmış ENUM)
+            // personel olarak kısıtlanır; tanınmayan rol hiçbir veriye erişemez.
+            if ($u['rol'] !== 'admin' && !empty($u['cari_id'])) $u['rol'] = 'personel';
+            elseif (!in_array($u['rol'], ['admin', 'okur', 'personel'], true)) $u['rol'] = 'yok';
+        }
         if (!$u) { $_SESSION = []; }
     }
     return $u;

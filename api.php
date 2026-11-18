@@ -666,6 +666,7 @@ if ($user['rol'] === 'personel') {
     try { personel_islem($a, $user, $method); }
     catch (PDOException $ex) { error_log('Cari Takip: ' . $ex->getMessage()); fail('Veritabanı hatası. Tekrar deneyin.', 500); }
 }
+if (!in_array($user['rol'], ['admin', 'okur'], true)) fail('Hesabınızın yetkisi tanımlı değil. Yöneticiye başvurun.', 403);
 $isAdmin = $user['rol'] === 'admin';
 $needAdmin = fn() => $isAdmin ?: fail('Bu işlem için yönetici yetkisi gerekiyor.', 403);
 
@@ -931,7 +932,7 @@ switch ($a) {
 
     case 'users':
         $needAdmin();
-        out(['ok' => true, 'users' => db()->query('SELECT id, kullanici, ad, rol, cari_id, sifre_degis, son_giris FROM kullanicilar ORDER BY id')->fetchAll()]);
+        out(['ok' => true, 'users' => array_map(fn($r) => $r['rol'] !== 'admin' && !empty($r['cari_id']) ? ['rol' => 'personel'] + $r : $r, db()->query('SELECT id, kullanici, ad, rol, cari_id, sifre_degis, son_giris FROM kullanicilar ORDER BY id')->fetchAll())]);
 
     case 'user_save':
         $needAdmin();
@@ -962,7 +963,10 @@ switch ($a) {
             try { db()->prepare('INSERT INTO kullanicilar (kullanici, ad, sifre_hash, rol, cari_id, sifre_degis) VALUES (?,?,?,?,?,?)')->execute([$k, $ad ?: $k, password_hash($pass, PASSWORD_DEFAULT), $rol, $cariId, $degis]); }
             catch (PDOException $ex) { fail('Bu kullanıcı adı zaten var.', 409); }
         }
-        audit('kullanicilar', $id ?: (int)db()->lastInsertId(), $id ? 'guncelle' : 'ekle', null, ['rol' => $rol, 'ad' => $ad]);
+        $kid = $id ?: (int)db()->lastInsertId();
+        $st = db()->prepare('SELECT rol FROM kullanicilar WHERE id = ?'); $st->execute([$kid]);
+        if ($st->fetchColumn() !== $rol) fail('Yetki veritabanına kaydedilemedi (kullanicilar.rol sütunu güncel değil). Çıkış yapıp yeniden girin; düzelmezse phpMyAdmin\'de lib/schema.sql\'deki kullanicilar tablosunu kontrol edin.', 500);
+        audit('kullanicilar', $kid, $id ? 'guncelle' : 'ekle', null, ['rol' => $rol, 'ad' => $ad]);
         out(['ok' => true]);
 
     case 'user_delete':
