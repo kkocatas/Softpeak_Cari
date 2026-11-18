@@ -7,7 +7,7 @@ header('Cache-Control: no-store');
 $user = null;
 try { $user = current_user(); }
 catch (Throwable $t) { http_response_code(500); exit('Veritabanına bağlanılamadı. config.php ayarlarını kontrol edin veya setup.php ile kurulumu tamamlayın.'); }
-$v = '31';
+$v = '32';
 $marka = 'Cari Takip'; $logo = null; $logoKoyu = 'normal';
 try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logoKoyu = ayar('logo_koyu') ?: 'normal'; } catch (Throwable $t) { /* ayarlar okunamazsa varsayılan ad */ }
 ?><!doctype html>
@@ -37,7 +37,7 @@ try { if ($user) ensure_schema(); $marka = marka_ad(); $logo = logo_url(); $logo
   <h1><?= e($marka) ?></h1>
   <p class="muted small">Devam etmek için giriş yapın.</p>
   <form id="login" class="form" style="grid-template-columns:1fr">
-    <label class="f">Kullanıcı adı<input id="l-user" name="kullanici" autocomplete="username" required autofocus></label>
+    <label class="f">Kullanıcı adı / e-posta<input id="l-user" name="kullanici" autocomplete="username" required autofocus></label>
     <label class="f">Şifre<input id="l-pass" name="sifre" type="password" autocomplete="current-password" required></label>
     <label class="f chk hatirla"><input type="checkbox" id="l-hatirla"> Bu cihazda beni hatırla (30 gün)</label>
     <div class="err" id="l-err" hidden></div>

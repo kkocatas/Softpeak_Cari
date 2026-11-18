@@ -1170,7 +1170,7 @@ function vAyar() {
   if (S.canWrite) {
     h += '<div class="panel"><div class="panel-head"><h2>Kullanıcılar</h2><button class="btn" data-act="new-user">+ Kullanıcı ekle</button></div>';
     if (!S.users) h += '<div class="empty">Yükleniyor…</div>';
-    else h += '<div class="tw"><table><thead><tr><th>Kullanıcı</th><th>Yetki</th><th>Son giriş</th></tr></thead><tbody>' + S.users.map(u => '<tr class="click" data-user="' + u.id + '"><td><b>' + esc(u.ad) + '</b><div class="small muted">' + esc(u.kullanici) + "</div></td><td>" + (u.rol === "admin" ? '<span class="chip out">Yönetici</span>' : u.rol === "personel" ? '<span class="chip in">Personel</span><div class="small muted">' + esc(cariAd(String(u.cari_id || ""))) + "</div>" : '<span class="chip mute">Salt okunur</span>') + '</td><td class="small muted">' + esc(u.son_giris || "—") + "</td></tr>").join("") + "</tbody></table></div>";
+    else h += '<div class="tw"><table><thead><tr><th>Kullanıcı</th><th>Yetki</th><th>Son giriş</th></tr></thead><tbody>' + S.users.map(u => '<tr class="click" data-user="' + u.id + '"><td><b>' + esc(u.ad) + '</b><div class="small muted">' + esc(u.kullanici) + (+u.sifre_degis ? ' <span class="chip kismi">Geçici şifre</span>' : "") + "</div></td><td>" + (u.rol === "admin" ? '<span class="chip out">Yönetici</span>' : u.rol === "personel" ? '<span class="chip in">Personel</span><div class="small muted">' + esc(cariAd(String(u.cari_id || ""))) + "</div>" : '<span class="chip mute">Salt okunur</span>') + '</td><td class="small muted">' + esc(u.son_giris || "—") + "</td></tr>").join("") + "</tbody></table></div>";
     h += "</div>";
   }
   h += "</div>";
@@ -1234,7 +1234,8 @@ function render() {
   if (!S.loaded) return;
   const ae = document.activeElement, aid = ae && ae.id, sel = aid && ae.selectionStart;
   let h;
-  if (S.personel) h = vPortal();
+  if (S.sifreZorunlu) h = vSifreZorunlu();
+  else if (S.personel) h = vPortal();
   else if (S.detail && S.detail.type === "cari") h = vCari(S.detail.id);
   else if (S.detail && S.detail.type === "proje") h = vProje(S.detail.id);
   else h = ({ ozet: vOzet, personel: () => vCariList("personel"), musteri: () => vCariList("musteri"), proje: vProjeList, fatura: vFatura, hareket: vHareket, odenecek: vOdenecek, arsiv: vArsiv, rapor: vRapor, agrapor: vAgRapor, ayar: vAyar }[S.view] || vOzet)();
@@ -1440,12 +1441,32 @@ async function pickPdf(file) {
     updCalc(); toast("Belgedeki bilgiler boş alanlara yazıldı; kontrol edin");
   } catch (e) { /* metin okunamazsa alanlar elle doldurulur */ }
 }
+/** Personel kartı seçilince yeni kullanıcının ad, kullanıcı adı ve ilk şifresini karttan doldurur. */
+function personelDoldur() {
+  const sec = document.getElementById("u-cari"), uy = document.getElementById("u-cari-uyari");
+  if (!sec || v("u-id")) return;
+  const c = S.data.cariler.find(x => x.id === sec.value); if (uy) uy.hidden = true;
+  if (!c) return;
+  const set = (i, val) => { const el = document.getElementById(i); if (el && val) el.value = val; };
+  const ep = (c.eposta || "").trim().toLocaleLowerCase("tr").replace(/ı/g, "i"), no = (c.vkn || "").replace(/\D/g, "");
+  set("u-ad", c.ad); set("u-k", ep); set("u-p", no);
+  const eks = [];
+  if (!ep) eks.push("e-posta");
+  if (no.length < 10) eks.push("TCKN / VKN");
+  if (eks.length && uy) { uy.textContent = "Kartta " + eks.join(" ve ") + " yok; ilgili alanı elle doldurun ya da önce personel kartına ekleyin."; uy.className = "small warn-txt"; uy.hidden = false; }
+}
+
+function vSifreZorunlu() {
+  return '<div class="sifre-zorunlu"><div class="panel"><h1>Şifrenizi belirleyin</h1><p class="muted">Hesabınız size verilen geçici şifreyle açıldı. Devam etmek için kendinize ait yeni bir şifre belirleyin.</p><form id="pw-form" class="form" style="grid-template-columns:1fr"><label class="f">Geçici şifre<input type="password" id="pw-old" autocomplete="current-password" required></label><label class="f">Yeni şifre (en az 10 karakter)<input type="password" id="pw-new" autocomplete="new-password" minlength="10" required></label><label class="f">Yeni şifre (tekrar)<input type="password" id="pw-new2" autocomplete="new-password" minlength="10" required></label><div class="r"><button class="btn" type="button" data-act="logout">Çıkış</button> <button class="btn primary" type="submit">Şifreyi kaydet ve devam et</button></div></form></div></div>';
+}
+
 function userModal(u) {
   const root = document.getElementById("modal-root"); const nu = !u; u = u || { rol: "okur" };
   root.innerHTML = '<div class="overlay" data-m="bg"><form class="modal" id="u-form" role="dialog" aria-modal="true" aria-label="Kullanıcı"><div class="modal-head"><h2>' + (nu ? "Yeni kullanıcı" : esc(u.ad)) + '</h2><button type="button" class="btn ghost" data-m="close" aria-label="Kapat">✕</button></div><div class="form">' +
     '<label class="f">Kullanıcı adı<input id="u-k" value="' + esc(u.kullanici) + '"' + (nu ? "" : " disabled") + ' autocomplete="off"></label><label class="f">Ad soyad<input id="u-ad" value="' + esc(u.ad) + '"></label>' +
     '<label class="f">Yetki<select id="u-rol">' + opt("okur", "Salt okunur (mali müşavir)", u.rol) + opt("admin", "Yönetici", u.rol) + opt("personel", "Personel (yalnız kendi faturaları)", u.rol) + '</select></label>' +
-    '<label class="f" id="u-cari-alan"' + (u.rol === "personel" ? "" : " hidden") + '>Personel kartı<select id="u-cari"><option value="">— Seçin —</option>' + S.data.cariler.filter(c => c.tip === "personel").sort((a, b) => a.ad.localeCompare(b.ad, "tr")).map(c => opt(c.id, c.ad, String(u.cari_id || ""))).join("") + '</select><span class="small muted">Personel yalnızca bu karta ait faturaları ve ödemeleri görür; Müşteri A/G ve diğer kayıtları göremez.</span></label><label class="f">' + (nu ? "Şifre" : "Yeni şifre (değiştirmeyecekseniz boş bırakın)") + '<input type="password" id="u-p" autocomplete="new-password"></label></div><div class="err" id="u-err" hidden></div>' +
+    '<label class="f" id="u-cari-alan"' + (u.rol === "personel" ? "" : " hidden") + '>Personel kartı<select id="u-cari"><option value="">— Seçin —</option>' + S.data.cariler.filter(c => c.tip === "personel").sort((a, b) => a.ad.localeCompare(b.ad, "tr")).map(c => opt(c.id, c.ad, String(u.cari_id || ""))).join("") + '</select><span class="small muted">Personel yalnızca bu karta ait faturaları ve ödemeleri görür; Müşteri A/G ve diğer kayıtları göremez.' + (nu ? " Kart seçilince ad soyad, kullanıcı adı (e-posta) ve ilk şifre (TCKN / VKN) karttan doldurulur." : "") + '</span><span class="small" id="u-cari-uyari" hidden></span></label><label class="f">' + (nu ? "Şifre" : "Yeni şifre (değiştirmeyecekseniz boş bırakın)") + '<input type="' + (nu ? "text" : "password") + '" id="u-p" autocomplete="' + (nu ? "off" : "new-password") + '" spellcheck="false"></label>' +
+    (u.id == (S.me && S.me.id) ? "" : '<label class="f chk"><input type="checkbox" id="u-degis"' + (nu ? " checked" : "") + '> İlk girişte şifresini değiştirmesi zorunlu olsun</label>') + '</div><div class="err" id="u-err" hidden></div>' +
     '<div class="modal-foot">' + (nu || u.id == S.me.id ? "" : '<button type="button" class="btn danger" id="u-del" data-id="' + u.id + '">Kullanıcıyı sil</button>') + '<div class="r"><button type="button" class="btn" data-m="close">Vazgeç</button><button class="btn primary" type="submit">Kaydet</button></div></div><input type="hidden" id="u-id" value="' + (u.id || "") + '"></form></div>';
 }
 
@@ -2073,10 +2094,11 @@ document.addEventListener("submit", async e => {
   else if (e.target.id === "pf-form") portalGonder();
   else if (e.target.id === "p-form") paketIndir();
   else if (e.target.id === "pw-form") {
-    try { await api("password", { body: { eski: v("pw-old"), yeni: v("pw-new") } }); e.target.reset(); toast("Şifreniz değiştirildi"); } catch (er) { toast(er.message); }
+    if (document.getElementById("pw-new2") && v("pw-new") !== v("pw-new2")) { toast("Yeni şifreler aynı değil"); return; }
+    try { await api("password", { body: { eski: v("pw-old"), yeni: v("pw-new") } }); e.target.reset(); toast("Şifreniz değiştirildi"); if (S.sifreZorunlu) { location.reload(); } } catch (er) { toast(er.message); }
   } else if (e.target.id === "u-form") {
     const err = document.getElementById("u-err"); err.hidden = true;
-    try { await api("user_save", { body: { id: v("u-id"), kullanici: v("u-k").trim(), ad: v("u-ad").trim(), rol: v("u-rol"), cariId: v("u-rol") === "personel" ? v("u-cari") : "", sifre: v("u-p") } }); closeModal(); toast("Kullanıcı kaydedildi"); loadAyar(); }
+    try { await api("user_save", { body: { id: v("u-id"), kullanici: v("u-k").trim(), ad: v("u-ad").trim(), rol: v("u-rol"), cariId: v("u-rol") === "personel" ? v("u-cari") : "", sifre: v("u-p"), sifreDegis: !!(document.getElementById("u-degis") || {}).checked } }); closeModal(); toast("Kullanıcı kaydedildi"); loadAyar(); }
     catch (er) { err.textContent = er.message; err.hidden = false; }
   }
 });
@@ -2096,7 +2118,8 @@ document.addEventListener("keydown", e => {
 let qT;
 document.addEventListener("input", e => {
   const id = e.target.id;
-  if (id === "u-rol") { const al = document.getElementById("u-cari-alan"); if (al) al.hidden = e.target.value !== "personel"; }
+  if (id === "u-rol") { const al = document.getElementById("u-cari-alan"); if (al) al.hidden = e.target.value !== "personel"; if (e.target.value === "personel") personelDoldur(); }
+  if (id === "u-cari") personelDoldur();
   if (id === "pf-gun" && S.pk) { const g = num(e.target.value), m = document.getElementById("pf-matrah"); if (g > 0 && m) m.value = nf.format(r2(g * num(S.pk.aylikAlis))); if (S.pForm) S.pForm.gun = e.target.value; pfHesap(); return; }
   if (id === "pf-matrah" || id === "pf-kdv") { pfHesap(); return; }
   if (id === "ara-q" && S.ara) { S.ara.q = e.target.value; S.ara.sel = 0; araCiz(); return; }
@@ -2185,6 +2208,7 @@ window.addEventListener("beforeunload", e => { if (S.imp.some(r => r.st !== "ok"
   try {
     const me = await api("me");
     S.me = me.user; S.csrf = me.csrf; S.ay = me.ayarlar || {}; S.firmaVkn = S.ay.firma_vkn || ""; logoKoyuUygula(); if (S.agGun == null || S.agGun === "") S.agGun = S.ay.ag_gun || 20; S.pdfMaxMb = me.pdfMaxMb || 20; S.canWrite = me.user.rol === "admin";
+    if (+me.user.sifre_degis) { S.sifreZorunlu = true; S.personel = me.user.rol === "personel"; S.loaded = true; document.body.classList.add("zorunlu"); render(); return; }
     if (me.user.rol === "personel") {
       S.personel = true; S.view = "benim";
       const b = await api("benim");

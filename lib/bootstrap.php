@@ -96,10 +96,13 @@ function current_user(): ?array {
     static $u = false;
     if ($u === false) {
         // cari_id sütunu sürüm 30 ile geldi; şema güncellenmeden önceki ilk istekte de çalışsın
-        try { $st = db()->prepare('SELECT id, kullanici, ad, rol, cari_id FROM kullanicilar WHERE id = ?'); $st->execute([$_SESSION['uid']]); }
-        catch (PDOException $e) { $st = db()->prepare('SELECT id, kullanici, ad, rol, NULL AS cari_id FROM kullanicilar WHERE id = ?'); }
-        $st->execute([$_SESSION['uid']]);
-        $u = $st->fetch() ?: null;
+        // cari_id sürüm 30, sifre_degis sürüm 32 ile geldi; şema güncellenmeden önceki ilk istekte de çalışsın
+        $st = null;
+        foreach (['cari_id, sifre_degis', 'cari_id, 0 AS sifre_degis', 'NULL AS cari_id, 0 AS sifre_degis'] as $kol) {
+            try { $st = db()->prepare("SELECT id, kullanici, ad, rol, $kol FROM kullanicilar WHERE id = ?"); $st->execute([$_SESSION['uid']]); break; }
+            catch (PDOException $e) { $st = null; }
+        }
+        $u = $st ? ($st->fetch() ?: null) : null;
         if (!$u) { $_SESSION = []; }
     }
     return $u;
@@ -166,7 +169,7 @@ function pdf_root(): string {
 }
 
 /* ---------- veritabanı sürümü (sonradan eklenen tablo/sütunlar) ---------- */
-const SCHEMA_VER = 8;
+const SCHEMA_VER = 9;
 /** Sonradan eklenen tabloları mevcut kurulumlarda oluşturur (oturum başına bir kez). */
 function ensure_schema(): void {
     if (($_SESSION['schema'] ?? 0) >= SCHEMA_VER) return;
@@ -208,6 +211,10 @@ function ensure_schema(): void {
     $st = db()->prepare("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'belgeler' AND COLUMN_NAME = 'sahip_tur'"); $st->execute();
     if (!str_contains((string)$st->fetchColumn(), 'fatura')) db()->exec("ALTER TABLE belgeler MODIFY sahip_tur ENUM('cari','proje','fatura') NOT NULL");
     db()->exec('DELETE FROM oturum_hatirla WHERE son_kullanma < NOW()');
+    // v9: kullanıcı adı olarak e-posta, ilk girişte şifre değiştirme zorunluluğu
+    $st = db()->prepare("SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kullanicilar' AND COLUMN_NAME = 'kullanici'"); $st->execute();
+    if ((int)$st->fetchColumn() < 120) db()->exec('ALTER TABLE kullanicilar MODIFY kullanici VARCHAR(120) NOT NULL');
+    if (!$kol('kullanicilar', 'sifre_degis')) db()->exec('ALTER TABLE kullanicilar ADD COLUMN sifre_degis TINYINT(1) NOT NULL DEFAULT 0 AFTER cari_id');
     $_SESSION['schema'] = SCHEMA_VER;
     unset($GLOBALS['__ayar_cache']);
 }

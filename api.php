@@ -501,7 +501,8 @@ function sifre_degistir(array $user): void {
     $st = db()->prepare('SELECT sifre_hash FROM kullanicilar WHERE id = ?'); $st->execute([$user['id']]);
     if (!password_verify((string)($b['eski'] ?? ''), (string)$st->fetchColumn())) fail('Mevcut şifre hatalı.');
     if (mb_strlen((string)($b['yeni'] ?? '')) < 10) fail('Yeni şifre en az 10 karakter olmalı.');
-    db()->prepare('UPDATE kullanicilar SET sifre_hash = ? WHERE id = ?')->execute([password_hash((string)$b['yeni'], PASSWORD_DEFAULT), $user['id']]);
+    if (hash_equals((string)($b['eski'] ?? ''), (string)$b['yeni'])) fail('Yeni şifre eskisiyle aynı olamaz.');
+    db()->prepare('UPDATE kullanicilar SET sifre_hash = ?, sifre_degis = 0 WHERE id = ?')->execute([password_hash((string)$b['yeni'], PASSWORD_DEFAULT), $user['id']]);
     try { db()->prepare('DELETE FROM oturum_hatirla WHERE kullanici_id = ? AND id <> ?')->execute([$user['id'], (int)($_SESSION['hatirla_id'] ?? 0)]); } catch (PDOException $e) {}
     out(['ok' => true]);
 }
@@ -638,7 +639,9 @@ if ($a === 'login' && $method === 'POST') {
     if ($st->fetchColumn() >= 8) fail('Çok fazla hatalı giriş denemesi. 15 dakika sonra tekrar deneyin.', 429);
     $b = body();
     $st = db()->prepare('SELECT * FROM kullanicilar WHERE kullanici = ?');
-    $st->execute([trim((string)($b['kullanici'] ?? ''))]);
+    $girilen = trim((string)($b['kullanici'] ?? ''));
+    if (str_contains($girilen, '@')) $girilen = strtolower($girilen); // e-posta: Türkçe I/ı karşılaştırmasına takılmasın
+    $st->execute([$girilen]);
     $u = $st->fetch();
     if (!$u || !password_verify((string)($b['sifre'] ?? ''), $u['sifre_hash'])) {
         db()->prepare('INSERT INTO giris_denemeleri (ip) VALUES (?)')->execute([$ip]);
@@ -657,6 +660,7 @@ if (!$user) fail('Oturum kapandı. Yeniden giriş yapın.', 401);
 
 if ($method === 'POST' && !hash_equals($_SESSION['csrf'], (string)($_SERVER['HTTP_X_CSRF'] ?? ''))) fail('Oturum doğrulanamadı; sayfayı yenileyin.', 403);
 ensure_schema();
+if (!empty($user['sifre_degis']) && !in_array($a, ['me', 'logout', 'password'], true)) fail('Devam etmek için önce şifrenizi değiştirin.', 403);
 if ($user['rol'] === 'personel') {
     // Personel hesabı ayrı ve dar bir uç kümesine yönlenir; aşağıdaki hiçbir işleme ulaşamaz.
     try { personel_islem($a, $user, $method); }
@@ -927,7 +931,7 @@ switch ($a) {
 
     case 'users':
         $needAdmin();
-        out(['ok' => true, 'users' => db()->query('SELECT id, kullanici, ad, rol, cari_id, son_giris FROM kullanicilar ORDER BY id')->fetchAll()]);
+        out(['ok' => true, 'users' => db()->query('SELECT id, kullanici, ad, rol, cari_id, sifre_degis, son_giris FROM kullanicilar ORDER BY id')->fetchAll()]);
 
     case 'user_save':
         $needAdmin();
@@ -945,15 +949,17 @@ switch ($a) {
         $ad = mb_substr(trim((string)($b['ad'] ?? '')), 0, 120);
         $pass = (string)($b['sifre'] ?? '');
         if ($pass !== '' && mb_strlen($pass) < 10) fail('Şifre en az 10 karakter olmalı.');
+        $degis = !empty($b['sifreDegis']) && $id !== (int)$user['id'] ? 1 : 0;
         if ($id) {
             if ($id === (int)$user['id'] && $rol !== 'admin') fail('Kendi yönetici yetkinizi kaldıramazsınız.');
             db()->prepare('UPDATE kullanicilar SET ad = ?, rol = ?, cari_id = ? WHERE id = ?')->execute([$ad, $rol, $cariId, $id]);
-            if ($pass !== '') { db()->prepare('UPDATE kullanicilar SET sifre_hash = ? WHERE id = ?')->execute([password_hash($pass, PASSWORD_DEFAULT), $id]); db()->prepare('DELETE FROM oturum_hatirla WHERE kullanici_id = ?')->execute([$id]); }
+            if ($pass !== '') { db()->prepare('UPDATE kullanicilar SET sifre_hash = ?, sifre_degis = ? WHERE id = ?')->execute([password_hash($pass, PASSWORD_DEFAULT), $degis, $id]); db()->prepare('DELETE FROM oturum_hatirla WHERE kullanici_id = ?')->execute([$id]); }
         } else {
             $k = trim((string)($b['kullanici'] ?? ''));
-            if (!preg_match('/^[a-zA-Z0-9._-]{3,60}$/', $k)) fail('Kullanıcı adı en az 3 karakter olmalı; harf, rakam, nokta ve tire kullanın.');
+            if (str_contains($k, '@')) $k = mb_strtolower($k);
+            if (!preg_match('/^[a-zA-Z0-9._@+-]{3,120}$/', $k)) fail('Kullanıcı adı en az 3 karakter olmalı; harf, rakam, nokta, tire veya e-posta adresi kullanın.');
             if ($pass === '') fail('Yeni kullanıcı için şifre girin.');
-            try { db()->prepare('INSERT INTO kullanicilar (kullanici, ad, sifre_hash, rol, cari_id) VALUES (?,?,?,?,?)')->execute([$k, $ad ?: $k, password_hash($pass, PASSWORD_DEFAULT), $rol, $cariId]); }
+            try { db()->prepare('INSERT INTO kullanicilar (kullanici, ad, sifre_hash, rol, cari_id, sifre_degis) VALUES (?,?,?,?,?,?)')->execute([$k, $ad ?: $k, password_hash($pass, PASSWORD_DEFAULT), $rol, $cariId, $degis]); }
             catch (PDOException $ex) { fail('Bu kullanıcı adı zaten var.', 409); }
         }
         audit('kullanicilar', $id ?: (int)db()->lastInsertId(), $id ? 'guncelle' : 'ekle', null, ['rol' => $rol, 'ad' => $ad]);
