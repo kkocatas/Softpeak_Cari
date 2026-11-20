@@ -59,6 +59,42 @@ function csvAd(ek) { const f = String((S.ay && S.ay.firma_ad) || "cari").toLocal
 function kdvli(b) { return '<div class="small muted kdvli">KDV dahil ' + tl(b) + "</div>"; }
 function ckdv(c) { return 1 + num(c.kdvOran ?? vKdv()) / 100; }
 function belgeEtiket(f) { return f.belgeTur && f.belgeTur !== "pdf" ? "e-Fatura" : "PDF"; }
+const BIRIMLER = ["gün", "saat", "adet", "ay", "hafta"];
+/** "23 gün", "160 saat"; miktar girilmemiş gelen faturada Firma A/G'den tam / yarım gün çıkıyorsa tahmini gösterir. */
+function miktarF(f) {
+  const m = num(f.miktar);
+  if (m > 0) return { m, b: f.birim || "adet", tahmin: false };
+  const ac = [...String(f.aciklama || "").matchAll(/(?:^|[\s(·|-])(\d{1,4}(?:[.,]\d{1,2})?)\s*(gün|saat|adet)(?![a-zçğıöşü])/gi)];
+  if (ac.length === 1) return { m: num(ac[0][1]), b: ac[0][2].toLocaleLowerCase("tr"), tahmin: true, kaynak: "açıklamadan" };
+  if (f.tur !== "gelen") return null;
+  const c = cari(f.cariId), ag = c && c.tip === "personel" ? num(c.aylikAlis) : 0;
+  if (!(ag > 0) || !(num(f.matrah) > 0)) return null;
+  const g = num(f.matrah) / ag;
+  return g > 0 && g <= 31 && Math.abs(g * 2 - Math.round(g * 2)) < 0.005 ? { m: Math.round(g * 2) / 2, b: "gün", tahmin: true, kaynak: "Firma A/G'ye bölünerek hesaplandı" } : null;
+}
+/** Fatura penceresinde birim "gün" iken miktar × A/G ile matrahı önerir (gelen: Firma A/G, kesilen: personelin Müşteri A/G'si). */
+function miktarMatrah() {
+  const h = document.getElementById("m-miktar-hint"), mt = document.getElementById("m-matrah"); if (!h || !mt) return;
+  h.textContent = "";
+  if (v("m-birim") !== "gün" || !S.canWrite) return;
+  const gelen = v("m-tur") === "gelen", p = cari(gelen ? v("m-cari") : v("m-personel")), ag = p && p.tip === "personel" ? num(gelen ? p.aylikAlis : p.aylikSatis) : 0, g = num(v("m-miktar"));
+  if (!(ag > 0)) return;
+  h.textContent = (gelen ? "Firma" : "Müşteri") + " A/G " + tl(ag) + " × gün";
+  if (g > 0 && (!mt.value || mt.dataset.oto === mt.value)) { mt.value = nf.format(r2(g * ag)); mt.dataset.oto = mt.value; updCalc(); }
+}
+function miktarYaz(x) { return x ? nf.format(x.m).replace(/,00$/, "") + " " + x.b : ""; }
+function miktarHtml(f, cls) {
+  const x = miktarF(f); if (!x) return "";
+  return '<span class="miktar ' + (cls || "") + (x.tahmin ? " tahmin" : "") + '"' + (x.tahmin ? ' title="Faturada miktar girilmemiş; ' + esc(x.kaynak) + '"' : "") + ">" + (x.tahmin ? "≈ " : "") + miktarYaz(x) + "</span>";
+}
+/** Belge metninden miktar + birim: "23 Gün 10.100TL", "160 Saat 450,00". Aynı birimli satırlar toplanır; farklı birimler varsa boş döner. */
+function miktarBul(T) {
+  T = normText(T || ""); const top = {};
+  const re = /(?:^|[\s|])(\d{1,6}(?:[.,]\d{1,2})?)\s*(gün|gun|saat|adet|ay|hafta)\s+(?!\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4})\d/gi;
+  let m; while ((m = re.exec(T))) { const b = m[2].toLocaleLowerCase("tr").replace("gun", "gün"); top[b] = (top[b] || 0) + num(m[1]); }
+  const k = Object.keys(top); return k.length === 1 ? { miktar: r2(top[k[0]]), birim: k[0] } : null;
+}
+
 function kaynakChip(f) { return f.kaynak === "personel" ? ' <span class="chip in kaynak">Personel yükledi</span>' : ""; }
 function pdfLink(f) { return f.pdf ? '<a class="pdf-link" href="' + pdfUrl(f.id) + '" target="_blank" rel="noopener" data-stop="1" title="' + esc(f.pdfAd || "Fatura") + '">' + belgeEtiket(f) + "</a>" : ""; }
 
@@ -410,7 +446,7 @@ function vPortal() {
   if (!fs.length) h += '<div class="empty small">Henüz fatura yok. Yukarıdan ilk faturanızı yükleyin.</div>';
   else h += '<div class="tw"><table><thead><tr><th>Tarih</th><th>Fatura</th><th>Dönem</th><th class="num">Tutar</th><th class="num">Ödenen</th><th class="num">Kalan</th><th>Ödeme tarihi</th><th>Durum</th><th></th></tr></thead><tbody>' + fs.map(f => {
     const c = calcF(f), od = Math.min(odenenF(f.id), c.net), ops = fatOdemeListe(f.id), son = ops.length ? ops[ops.length - 1].h.tarih : "", silinir = f.kaynak === "personel" && od <= 0.004;
-    return '<tr><td>' + fd(f.tarih) + vadeHtml(f) + "</td><td><b>" + esc(f.no || "—") + "</b> " + pdfLink(f) + (f.aciklama ? '<div class="small muted">' + esc(f.aciklama) + "</div>" : "") + "</td><td>" + (f.donem ? ymLabel(f.donem) : "—") + '</td><td class="num">' + tl(c.net) + '<div class="small muted kdvli">KDV hariç ' + tl(c.matrah) + '</div></td><td class="num">' + (od > 0.004 ? tl(od) : "—") + '</td><td class="num">' + (c.net - od > 0.004 ? "<b>" + tl(c.net - od) + "</b>" : "—") + "</td><td>" + (son ? fd(son) + (ops.length > 1 ? '<div class="small muted">' + ops.length + " ödeme</div>" : "") : '<span class="muted">—</span>') + "</td><td>" + durumChipF(f) + '</td><td class="num">' + (silinir ? '<button class="btn ghost sm sil" data-p-sil="' + f.id + '">' + (S.pSilOnay === f.id ? "Silinsin mi?" : "Sil") + "</button>" : "") + "</td></tr>";
+    return '<tr><td>' + fd(f.tarih) + vadeHtml(f) + "</td><td><b>" + esc(f.no || "—") + "</b> " + pdfLink(f) + (f.aciklama ? '<div class="small muted">' + esc(f.aciklama) + "</div>" : "") + "</td><td>" + (f.donem ? ymLabel(f.donem) : "—") + (num(f.miktar) > 0 ? '<div class="small"><span class="miktar">' + miktarYaz({ m: num(f.miktar), b: f.birim || "adet" }) + "</span></div>" : "") + '</td><td class="num">' + tl(c.net) + '<div class="small muted kdvli">KDV hariç ' + tl(c.matrah) + '</div></td><td class="num">' + (od > 0.004 ? tl(od) : "—") + '</td><td class="num">' + (c.net - od > 0.004 ? "<b>" + tl(c.net - od) + "</b>" : "—") + "</td><td>" + (son ? fd(son) + (ops.length > 1 ? '<div class="small muted">' + ops.length + " ödeme</div>" : "") : '<span class="muted">—</span>') + "</td><td>" + durumChipF(f) + '</td><td class="num">' + (silinir ? '<button class="btn ghost sm sil" data-p-sil="' + f.id + '">' + (S.pSilOnay === f.id ? "Silinsin mi?" : "Sil") + "</button>" : "") + "</td></tr>";
   }).join("") + "</tbody></table></div>";
   h += "</div>";
   // Ödemeler
@@ -427,7 +463,7 @@ function portalForm() {
     (F.file ? '<div class="pdfbox"><span class="name">' + esc(F.file.name) + '</span><span class="small muted">' + boyutYaz(F.file.size) + (F.not ? " · " + esc(F.not) : "") + '</span><label class="btn sm" for="p-dosya">Değiştir</label><input type="file" id="p-dosya" accept=".pdf,.zip,.xml,application/pdf" hidden></div>' : '<div class="pdfbox"><span class="name">Fatura belgesi seçilmedi</span><label class="btn sm primary" for="p-dosya">Dosya seç</label><input type="file" id="p-dosya" accept=".pdf,.zip,.xml,application/pdf" hidden></div>') +
     '<div class="form" style="margin-top:14px"><label class="f">Fatura no<input id="pf-no" value="' + esc(F.no || "") + '" placeholder="ör. ABC2026000000012"></label><label class="f">Fatura tarihi<input type="date" id="pf-tarih" value="' + esc(F.tarih || "") + '"></label>' +
     '<label class="f">Hizmet dönemi<input type="month" id="pf-donem" value="' + esc(F.donem || "") + '"></label>' +
-    '<label class="f">Gün sayısı (isteğe bağlı)<input type="number" id="pf-gun" min="0" max="31" step="0.5" value="' + esc(F.gun || "") + '" placeholder="Matrahı hesaplamak için"><span class="small muted">Firma A/G ' + tl(k.aylikAlis || 0) + " × gün</span></label>" +
+    '<label class="f">Çalışılan gün<input type="number" id="pf-gun" min="0" max="31" step="0.5" value="' + esc(F.gun || "") + '" placeholder="Matrahı hesaplamak için"><span class="small muted">Firma A/G ' + tl(k.aylikAlis || 0) + " × gün</span></label>" +
     '<label class="f">Matrah (KDV hariç)<input id="pf-matrah" inputmode="decimal" value="' + (F.matrah ? nf.format(F.matrah) : "") + '"></label><label class="f">KDV oranı<select id="pf-kdv">' + kdvOpts(F.kdvOran ?? k.kdvOran ?? vKdv()) + "</select></label>" +
     '<label class="f full">Açıklama<input id="pf-ack" value="' + esc(F.aciklama || "") + '" maxlength="500"></label>' +
     '<div class="calc" id="pf-calc"></div></div><div class="err" id="pf-err" hidden></div><div class="actions" style="margin-top:14px"><button class="btn primary" type="submit"' + (S.pBusy ? " disabled" : "") + ">" + (S.pBusy ? "Gönderiliyor…" : "Faturayı gönder") + "</button></div></form>";
@@ -444,14 +480,15 @@ async function portalDosya(file) {
   const F = S.pForm = Object.assign(S.pForm || {}, { file, not: "okunuyor…" }); render();
   try {
     const pc = (await faturaDosyalari(file))[0];
-    if (pc.kind === "ubl") { const u = pc.ubl; Object.assign(F, { file: pc.file, no: u.no, tarih: u.tarih, donem: u.donem, matrah: r2(u.matrah), kdvOran: u.kdvOran, aciklama: u.aciklama || F.aciklama, not: "e-Fatura dosyasından okundu, kontrol edin" }); }
-    else { const t = await pdfText(file), p = parseFatura(t); Object.assign(F, { no: p.no || F.no, tarih: p.tarih || F.tarih, donem: p.donem || (p.tarih ? p.tarih.slice(0, 7) : F.donem), matrah: r2(p.matrah || F.matrah || 0), kdvOran: p.kdvOran ?? F.kdvOran, aciklama: F.aciklama || kalemler(t), not: t.replace(/\s/g, "").length ? "PDF'ten okundu, kontrol edin" : "PDF'te metin yok; bilgileri elle girin" }); }
+    if (pc.kind === "ubl") { const u = pc.ubl; if (u.birim === "gün") F.gun = u.miktar; Object.assign(F, { file: pc.file, no: u.no, tarih: u.tarih, donem: u.donem, matrah: r2(u.matrah), miktar: u.miktar || "", birim: u.birim || "", kdvOran: u.kdvOran, aciklama: u.aciklama || F.aciklama, not: "e-Fatura dosyasından okundu, kontrol edin" }); }
+    else { const t = await pdfText(file), p = parseFatura(t), mb = miktarBul(t); if (mb) { F.miktar = mb.miktar; F.birim = mb.birim; if (mb.birim === "gün") F.gun = mb.miktar; } Object.assign(F, { no: p.no || F.no, tarih: p.tarih || F.tarih, donem: p.donem || (p.tarih ? p.tarih.slice(0, 7) : F.donem), matrah: r2(p.matrah || F.matrah || 0), kdvOran: p.kdvOran ?? F.kdvOran, aciklama: F.aciklama || kalemler(t), not: t.replace(/\s/g, "").length ? "PDF'ten okundu, kontrol edin" : "PDF'te metin yok; bilgileri elle girin" }); }
   } catch (e) { F.not = "Dosya okunamadı; bilgileri elle girin"; }
   render(); pfHesap();
 }
 async function portalGonder() {
   const F = S.pForm, err = document.getElementById("pf-err"); err.hidden = true;
-  const data = { no: v("pf-no").trim(), tarih: v("pf-tarih"), donem: v("pf-donem"), matrah: num(v("pf-matrah")), kdvOran: num(v("pf-kdv")), aciklama: v("pf-ack").trim() };
+  const gun = num(v("pf-gun"));
+  const data = { no: v("pf-no").trim(), tarih: v("pf-tarih"), donem: v("pf-donem"), matrah: num(v("pf-matrah")), miktar: gun > 0 ? gun : (F.birim && F.birim !== "gün" ? F.miktar || "" : ""), birim: gun > 0 ? "gün" : (F.birim && F.birim !== "gün" && F.miktar ? F.birim : ""), kdvOran: num(v("pf-kdv")), aciklama: v("pf-ack").trim() };
   const eksik = [!F.file && "fatura belgesi", !data.no && "fatura no", !data.tarih && "tarih", !data.donem && "dönem", !(data.matrah > 0) && "matrah"].filter(Boolean);
   if (eksik.length) { err.textContent = "Eksik: " + eksik.join(", ") + "."; err.hidden = false; return; }
   const fd_ = new FormData(); fd_.append("data", JSON.stringify(data)); fd_.append("pdf", F.file, F.file.name);
@@ -620,7 +657,7 @@ function vOzet() {
       const g = fd_.filter(f => f.tur === "gelen" && f.cariId === p.id), K = kesilenOf(p.id), k = K.k;
       const gs = g.reduce((s, f) => s + calcF(f).matrah, 0), ks = K.ks, gsB = g.reduce((s, f) => s + calcF(f).brut, 0), ksB = K.ksB; tg += gs; tk += ks; tgB += gsB; tkB += ksB;
       h += '<tr class="click" data-open="' + p.id + '"><td><b>' + esc(p.ad) + "</b></td><td>" + esc(p.musteriId ? cariAd(p.musteriId) : "—") + "</td>" +
-        "<td>" + (g.length ? '<span class="chip ok">Girildi</span>' : '<span class="chip no">Bekleniyor</span>') + '</td><td class="num">' + (g.length ? tl(gs) + kdvli(gsB) : "—") + "</td>" +
+        "<td>" + (g.length ? '<span class="chip ok">Girildi</span>' + (g.map(f => miktarHtml(f)).filter(Boolean).length ? '<div class="small">' + g.map(f => miktarHtml(f)).filter(Boolean).join(" + ") + "</div>" : "") : '<span class="chip no">Bekleniyor</span>') + '</td><td class="num">' + (g.length ? tl(gs) + kdvli(gsB) : "—") + "</td>" +
         "<td>" + (k.length ? '<span class="chip ok" title="' + esc(k.map(f => (f.no || fd(f.tarih)) + " · " + cariAd(f.cariId)).join("\n")) + '">Kesildi</span>' + (K.acik ? '<div class="small muted">açıklamadan eşleşti</div>' : "") : '<span class="chip no">Kesilmedi</span>') + '</td><td class="num">' + (k.length ? (K.eksik ? (ks ? tl(ks) + " + " : "") + '<span class="small muted" title="Fatura birden çok personeli kapsıyor; satır tutarları ayrılamadı">ortak fatura</span>' : tl(ks)) + (ks ? kdvli(ksB) : "") : "—") + "</td>" +
         '<td class="num">' + (g.length || k.length ? tl(ks - gs) + kdvli(ksB - gsB) : "—") + '</td><td class="num">' + balHtml(bakiye(p.id)) + "</td></tr>";
     });
@@ -706,10 +743,10 @@ function fatOdemeListe(fid) {
 }
 function cariFaturaTable(id, c) {
   const fs = S.data.faturalar.filter(f => f.cariId === id).sort((a, b) => (b.tarih || "").localeCompare(a.tarih || "") || String(b.id).localeCompare(String(a.id), undefined, { numeric: true }));
-  const sel = S.canWrite, g = c.tip === "personel", odeAd = g ? "Ödeme" : "Tahsilat", cols = 7 + (sel ? 1 : 0);
+  const sel = S.canWrite, g = c.tip === "personel", odeAd = g ? "Ödeme" : "Tahsilat", cols = 8 + (sel ? 1 : 0);
   if (!fs.length) return '<div class="empty">Bu cariye ait fatura yok.</div>';
   let h = '<div class="tw"><table class="fatlist"><thead><tr>' + (sel ? '<th class="sel"><input type="checkbox" data-sel="fat-all" aria-label="Tüm faturaları seç"' + (fs.every(f => S.selFat.has(f.id)) ? " checked" : "") + "></th>" : "") +
-    '<th>Tarih</th><th>Fatura</th><th class="num">Tutar</th><th class="num">' + (g ? "Ödenen" : "Tahsil edilen") + '</th><th class="num">Kalan</th><th>' + odeAd + ' tarihi</th><th>Durum</th></tr></thead><tbody>';
+    '<th>Tarih</th><th>Fatura</th><th class="num">Miktar</th><th class="num">Tutar</th><th class="num">' + (g ? "Ödenen" : "Tahsil edilen") + '</th><th class="num">Kalan</th><th>' + odeAd + ' tarihi</th><th>Durum</th></tr></thead><tbody>';
   let tT = 0, tO = 0;
   fs.forEach(f => {
     const cf = calcF(f), od = odenenF(f.id), kal = r2(cf.net - od), ops = fatOdemeListe(f.id), ac = !!S.acikFat[f.id], on = sel && S.selFat.has(f.id);
@@ -718,6 +755,7 @@ function cariFaturaTable(id, c) {
     h += '<tr class="click fat-row' + gecSinif(f) + (on ? " selected" : "") + (ac ? " open" : "") + '" data-fac="' + f.id + '" aria-expanded="' + ac + '">' + (sel ? '<td class="sel"><input type="checkbox" data-sel="fat" value="' + f.id + '" aria-label="Faturayı seç"' + (on ? " checked" : "") + "></td>" : "") +
       '<td style="white-space:nowrap"><span class="caret" aria-hidden="true">▸</span> ' + fd(f.tarih) + vadeHtml(f) + "</td>" +
       "<td><b>" + esc(f.no || "—") + "</b> " + pdfLink(f) + kaynakChip(f) + ekChip(f) + (f.aciklama ? '<div class="small muted">' + esc(f.aciklama) + "</div>" : "") + (f.donem ? '<div class="small muted">Dönem: ' + ymLabel(f.donem) + "</div>" : "") + "</td>" +
+      '<td class="num">' + (miktarHtml(f) || '<span class="muted">—</span>') + "</td>" +
       '<td class="num">' + tl(cf.net) + '<div class="small muted kdvli">KDV hariç ' + tl(cf.matrah) + "</div></td>" +
       '<td class="num">' + (od > 0.004 ? tl(od) : "—") + '</td><td class="num">' + (kal > 0.004 ? "<b>" + tl(kal) + "</b>" : "—") + "</td>" +
       '<td style="white-space:nowrap">' + (tarihler.length ? fd(tarihler[tarihler.length - 1]) + (tarihler.length > 1 ? '<div class="small muted">' + ops.length + " " + odeAd.toLocaleLowerCase("tr") + "</div>" : "") : '<span class="muted">—</span>') + "</td>" +
@@ -858,7 +896,7 @@ function vFatura() {
     const c = calcF(f); tm += c.matrah; tk += c.kdv; tn += c.net;
     const fp = f.projeId || f.personelId ? [] : faturaPersonelleri(f);
     const link = f.projeId ? "Proje: " + esc((proje(f.projeId) || {}).ad || "—") : f.personelId ? "Personel: " + esc(cariAd(f.personelId)) : fp.length ? "Personel: " + esc(fp.map(x => cariAd(x.pid)).join(", ")) + " (açıklamadan)" : "";
-    h += '<tr class="click' + gecSinif(f) + '" data-edit="fatura:' + f.id + '"><td style="white-space:nowrap">' + fd(f.tarih) + vadeHtml(f) + '</td><td><span class="chip ' + (f.tur === "kesilen" ? "out" : "in") + '">' + (f.tur === "kesilen" ? "Kesilen" : "Gelen") + "</span></td><td class=\"cari-td\">" + esc(cariAd(f.cariId)) + (link ? '<div class="small muted">' + link + "</div>" : "") + "</td><td>" + esc(f.no || "") + " " + pdfLink(f) + kaynakChip(f) + ekChip(f) + '</td><td style="white-space:nowrap">' + ymLabel(f.donem) + '</td><td class="num">' + tl(c.matrah) + '</td><td class="num">' + tl(c.kdv) + (c.tevkif ? '<div class="small muted">Tevk. −' + tl(c.tevkif) + "</div>" : "") + '</td><td class="num">' + tl(c.net) + "</td><td>" + durumChipF(f) + '</td><td class="num">' + (kalanF(f) > 0.004 ? tl(kalanF(f)) : "—") + "</td></tr>"; tkal += Math.max(0, kalanF(f));
+    h += '<tr class="click' + gecSinif(f) + '" data-edit="fatura:' + f.id + '"><td style="white-space:nowrap">' + fd(f.tarih) + vadeHtml(f) + '</td><td><span class="chip ' + (f.tur === "kesilen" ? "out" : "in") + '">' + (f.tur === "kesilen" ? "Kesilen" : "Gelen") + "</span></td><td class=\"cari-td\">" + esc(cariAd(f.cariId)) + (link ? '<div class="small muted">' + link + "</div>" : "") + "</td><td>" + esc(f.no || "") + " " + pdfLink(f) + kaynakChip(f) + ekChip(f) + '</td><td style="white-space:nowrap">' + ymLabel(f.donem) + '</td><td class="num">' + tl(c.matrah) + (miktarHtml(f) ? '<div class="small">' + miktarHtml(f) + "</div>" : "") + '</td><td class="num">' + tl(c.kdv) + (c.tevkif ? '<div class="small muted">Tevk. −' + tl(c.tevkif) + "</div>" : "") + '</td><td class="num">' + tl(c.net) + "</td><td>" + durumChipF(f) + '</td><td class="num">' + (kalanF(f) > 0.004 ? tl(kalanF(f)) : "—") + "</td></tr>"; tkal += Math.max(0, kalanF(f));
   });
   return h + '</tbody><tfoot><tr><td colspan="5">' + list.length + ' fatura</td><td class="num">' + tl(tm) + '</td><td class="num">' + tl(tk) + '</td><td class="num">' + tl(tn) + '</td><td></td><td class="num">' + tl(tkal) + "</td></tr></tfoot></table></div></div>";
 }
@@ -961,6 +999,9 @@ function parseUBL(xmlText) {
   }));
   if (r.kdvOran == null) r.kdvOran = vKdv();
   kids(R, "WithholdingTaxTotal").forEach(tt => kids(tt, "TaxSubtotal").forEach(st => { const y = num(txt(kid(st, "Percent"))); if (y) r.tevkifat = Math.round(y / 10); }));
+  const mTop = {};
+  kids(R, "InvoiceLine").forEach(l => { const q = kid(l, "InvoicedQuantity"), b = BIRIM[(q && q.getAttribute("unitCode")) || ""]; if (b && BIRIMLER.includes(b)) mTop[b] = (mTop[b] || 0) + num(txt(q)); });
+  const mk = Object.keys(mTop); if (mk.length === 1 && mTop[mk[0]] > 0) { r.miktar = r2(mTop[mk[0]]); r.birim = mk[0]; }
   const satirlar = kids(R, "InvoiceLine").map(l => {
     const q = kid(l, "InvoicedQuantity"), it = kid(l, "Item");
     const ad = [txt(kid(it, "Name")), txt(kid(it, "Description"))].filter(Boolean).join(" ").replace(/\s+/g, " ");
@@ -1119,12 +1160,12 @@ async function addImportFiles(files) {
       try {
         if (pc.kind === "ubl") {
           const u = pc.ubl; r.kaynak = "xml"; r.text = u.ozet; r.aciklama = u.aciklama;
-          Object.assign(r, { no: u.no, tarih: u.tarih, donem: u.donem, matrah: r2(u.matrah), kdvOran: u.kdvOran, tevkifat: u.tevkifat || 0, stopajOran: u.stopajOran || 0, odenecek: u.odenecek, vkns: u.vkns, aliciVkn: u.aliciVkn });
+          Object.assign(r, { no: u.no, tarih: u.tarih, donem: u.donem, matrah: r2(u.matrah), miktar: u.miktar || "", birim: u.birim || "", kdvOran: u.kdvOran, tevkifat: u.tevkifat || 0, stopajOran: u.stopajOran || 0, odenecek: u.odenecek, vkns: u.vkns, aliciVkn: u.aliciVkn });
           matchRow(r);
           const own = (S.firmaVkn || "").trim();
           if (!r.cariId) { const karsi = own && u.saticiVkn === own ? { id: u.aliciVkn, ad: u.aliciAd } : { id: u.saticiVkn, ad: u.saticiAd }; r.vknHint = karsi.id; r.adHint = karsi.ad; if (own) r.tur = u.saticiVkn === own ? "kesilen" : "gelen"; }
         } else {
-          const txt = await pdfText(r.file); r.text = txt; r.aciklama = kalemler(txt);
+          const txt = await pdfText(r.file); r.text = txt; r.aciklama = kalemler(txt); Object.assign(r, miktarBul(txt) || {});
           const p = parseFatura(txt);
           Object.assign(r, { no: p.no || "", tarih: p.tarih || "", donem: p.donem || (p.tarih ? p.tarih.slice(0, 7) : ""), matrah: r2(p.matrah || 0), kdvOran: p.kdvOran ?? vKdv(), tevkifat: p.tevkifat || 0, odenecek: p.odenecek || 0, vkns: p.vkns, aliciVkn: p.aliciVkn });
           matchRow(r);
@@ -1150,7 +1191,7 @@ async function saveImports() {
     r.st = "busy"; render();
     const fd_ = new FormData();
     fd_.append("pdf", r.file, r.file.name);
-    fd_.append("data", JSON.stringify({ tur: r.tur, cariId: r.cariId, no: r.no, tarih: r.tarih, donem: r.donem || r.tarih.slice(0, 7), matrah: r2(num(r.matrah)), kdvOran: +r.kdvOran, tevkifat: +r.tevkifat, stopajOran: +r.stopajOran || 0, aciklama: r.aciklama || "" }));
+    fd_.append("data", JSON.stringify({ tur: r.tur, cariId: r.cariId, no: r.no, tarih: r.tarih, donem: r.donem || r.tarih.slice(0, 7), matrah: r2(num(r.matrah)), miktar: r.miktar || "", birim: r.miktar ? r.birim : "", kdvOran: +r.kdvOran, tevkifat: +r.tevkifat, stopajOran: +r.stopajOran || 0, aciklama: r.aciklama || "" }));
     try { const j = await api("import", { form: fd_ }); upsert("faturalar", j.rec); r.st = "ok"; ok++; }
     catch (e) { r.st = "err"; r.err = e.message; bad++; }
   }
@@ -1305,6 +1346,7 @@ function renderModal() {
       '<label class="f">Fatura tarihi<input type="date" id="m-tarih" value="' + esc(r.tarih || today()) + '"' + RO() + "></label>" +
       '<label class="f">Hizmet dönemi<input type="month" id="m-donem" value="' + esc(r.donem || p.donem || S.donem) + '"' + RO() + "></label>" +
       '<label class="f">Vade tarihi<input type="date" id="m-vade" value="' + esc(r.vade) + '"' + RO() + '><span class="small muted" id="m-vade-hint"></span></label>' +
+      '<label class="f">Miktar<span class="miktar-gir"><input id="m-miktar" inputmode="decimal" value="' + (num(r.miktar) > 0 ? nf.format(r.miktar).replace(/,00$/, "") : "") + '" placeholder="ör. 23"' + RO() + '><select id="m-birim" aria-label="Birim"' + RO() + ">" + BIRIMLER.map(b => opt(b, b, r.birim || "gün")).join("") + '</select></span><span class="small muted" id="m-miktar-hint"></span></label>' +
       '<label class="f">Matrah (KDV hariç)<input id="m-matrah" inputmode="decimal" required value="' + (r.matrah != null ? nf.format(r.matrah) : "") + '" placeholder="0,00"' + RO() + "></label>" +
       '<label class="f">KDV oranı<select id="m-kdv"' + RO() + ">" + kdvOpts(r.kdvOran ?? vKdv()) + "</select></label>" +
       '<label class="f">KDV tevkifatı<select id="m-tev"' + RO() + ">" + [[0, "Yok"], [2, "2/10"], [3, "3/10"], [4, "4/10"], [5, "5/10"], [7, "7/10"], [9, "9/10"], [10, "Tam (10/10)"]].map(([v, l]) => opt(v, l, r.tevkifat ?? 0)).join("") + "</select></label>" +
@@ -1374,7 +1416,7 @@ async function saveModal() {
     data = { ad: v("m-ad").trim(), musteriId: v("m-musteri"), bedel: r2(num(v("m-bedel"))), durum: v("m-durum"), baslangic: v("m-bas"), bitis: v("m-bit"), aciklama: v("m-acik").trim() };
   } else if (M.kind === "fatura") {
     if (!v("m-cari")) return fail("Cari seçin."); const m = num(v("m-matrah")); if (!(m > 0)) return fail("Matrah 0'dan büyük olmalı. Ondalık için virgül kullanın, ör. 85.000,00"); if (!v("m-tarih")) return fail("Fatura tarihini girin."); col = "faturalar";
-    data = { tur: v("m-tur"), cariId: v("m-cari"), personelId: v("m-tur") === "kesilen" ? v("m-personel") : "", projeId: v("m-proje"), no: v("m-no").trim(), tarih: v("m-tarih"), donem: v("m-donem") || v("m-tarih").slice(0, 7), vade: v("m-vade"), matrah: r2(m), kdvOran: +v("m-kdv"), tevkifat: +v("m-tev"), stopajOran: +v("m-stop"), aciklama: v("m-acik").trim() };
+    data = { tur: v("m-tur"), cariId: v("m-cari"), personelId: v("m-tur") === "kesilen" ? v("m-personel") : "", projeId: v("m-proje"), no: v("m-no").trim(), tarih: v("m-tarih"), donem: v("m-donem") || v("m-tarih").slice(0, 7), vade: v("m-vade"), matrah: r2(m), miktar: num(v("m-miktar")) > 0 ? r2(num(v("m-miktar"))) : "", birim: num(v("m-miktar")) > 0 ? v("m-birim") : "", kdvOran: +v("m-kdv"), tevkifat: +v("m-tev"), stopajOran: +v("m-stop"), aciklama: v("m-acik").trim() };
   } else {
     if (!v("m-cari")) return fail("Cari seçin."); const t = num(v("m-tutar")); if (!(t > 0)) return fail("Tutar 0'dan büyük olmalı. Ondalık için virgül kullanın, ör. 12.500,00"); if (!v("m-tarih")) return fail("Tarihi girin."); col = "hareketler";
     data = { tur: v("m-tur"), cariId: v("m-cari"), tarih: v("m-tarih"), tutar: r2(t), yontem: v("m-yontem"), projeId: v("m-proje"), aciklama: v("m-acik").trim() };
@@ -1426,7 +1468,7 @@ async function pickPdf(file) {
   // Yeni faturada boş alanları belgeden doldur
   if (M.rec) return;
   try {
-    if (!p) { const txt = await pdfText(file); p = parseFatura(txt); ac = kalemler(txt); }
+    if (!p) { const txt = await pdfText(file); p = parseFatura(txt); ac = kalemler(txt); Object.assign(p, miktarBul(txt) || {}); }
     if (S.modal !== M) return;
     const set = (id, val) => { const e = document.getElementById(id); if (e && val && !e.value) { e.value = val; return true; } return false; };
     set("m-no", p.no);
@@ -1434,6 +1476,7 @@ async function pickPdf(file) {
     if (p.tarih) { const t = document.getElementById("m-tarih"); if (t && t.value === today()) t.value = p.tarih; }
     if (p.donem || p.tarih) { const d = document.getElementById("m-donem"); if (d) d.value = p.donem || p.tarih.slice(0, 7); }
     if (p.matrah) set("m-matrah", nf.format(p.matrah));
+    { const mb = p.miktar ? p : miktarBul(ac || ""); if (mb && mb.miktar && set("m-miktar", nf.format(mb.miktar).replace(/,00$/, ""))) { const b = document.getElementById("m-birim"); if (b) b.value = mb.birim; } }
     if (p.kdvOran != null) { const k = document.getElementById("m-kdv"); if (k && [...k.options].some(o => +o.value === p.kdvOran)) k.value = p.kdvOran; }
     if (p.tevkifat) document.getElementById("m-tev").value = p.tevkifat;
     if (p.stopajOran) { const st = document.getElementById("m-stop"); if (st && [...st.options].some(o => +o.value === p.stopajOran)) st.value = p.stopajOran; }
@@ -1678,8 +1721,8 @@ function csvNum(n) { return r2(n); }
 function csv(kind) {
   let rows, name;
   if (kind === "fatura") {
-    rows = [["Tarih", "Tür", "Cari", "VKN/TCKN", "Fatura no", "Dönem", "Personel", "Proje", "Matrah", "KDV %", "KDV", "Tevkifat", "Stopaj", "Net", "PDF", "Açıklama"]];
-    filteredFaturalar().slice().reverse().forEach(f => { const c = calcF(f), cr = cari(f.cariId) || {}; rows.push([xd(f.tarih), f.tur === "kesilen" ? "Kesilen" : "Gelen", cr.ad, cr.vkn, f.no, f.donem ? ymLabel(f.donem) : "", f.personelId ? cariAd(f.personelId) : "", f.projeId ? (proje(f.projeId) || {}).ad : "", csvNum(c.matrah), { g: f.kdvOran }, csvNum(c.kdv), csvNum(c.tevkif), csvNum(c.stopaj), csvNum(c.net), f.pdf ? "Var" : "", f.aciklama]); });
+    rows = [["Tarih", "Tür", "Cari", "VKN/TCKN", "Fatura no", "Dönem", "Personel", "Proje", "Miktar", "Matrah", "KDV %", "KDV", "Tevkifat", "Stopaj", "Net", "PDF", "Açıklama"]];
+    filteredFaturalar().slice().reverse().forEach(f => { const c = calcF(f), cr = cari(f.cariId) || {}; rows.push([xd(f.tarih), f.tur === "kesilen" ? "Kesilen" : "Gelen", cr.ad, cr.vkn, f.no, f.donem ? ymLabel(f.donem) : "", f.personelId ? cariAd(f.personelId) : "", f.projeId ? (proje(f.projeId) || {}).ad : "", (x => x && !x.tahmin ? miktarYaz(x) : "")(miktarF(f)), csvNum(c.matrah), { g: f.kdvOran }, csvNum(c.kdv), csvNum(c.tevkif), csvNum(c.stopaj), csvNum(c.net), f.pdf ? "Var" : "", f.aciklama]); });
     name = csvAd("faturalar") + (S.fDonem ? "-" + S.fDonem : "") + ".csv";
   } else {
     rows = [["Tarih", "Tür", "Cari", "Tutar", "Yöntem", "Proje", "Açıklama"]];
@@ -1879,9 +1922,9 @@ function paketModal() {
 }
 function dosyaAdi(s) { return String(s || "").normalize("NFC").replace(/[\\/:*?"<>|\x00-\x1F]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60).replace(/[. ]+$/, ""); }
 function faturaSatirlari(list) {
-  const rows = [["Tarih", "Fatura no", "Cari", "VKN/TCKN", "Dönem", "Vade", "Matrah", "KDV %", "KDV", "KDV dahil", "Tevkifat", "Stopaj", "Ödenecek / tahsil", "Ödenen", "Kalan", "Durum", "Açıklama"]];
-  list.forEach(f => { const c = calcF(f), cr = cari(f.cariId) || {}, o = Math.min(odenenF(f.id), c.net); rows.push([xd(f.tarih), f.no, cr.ad, cr.vkn, f.donem ? ymLabel(f.donem) : "", xd(vadeF(f)), c.matrah, { g: f.kdvOran }, c.kdv, c.brut, c.tevkif, c.stopaj, c.net, o, r2(c.net - o), { acik: "Açık", kismi: "Kısmi", odendi: f.tur === "gelen" ? "Ödendi" : "Tahsil edildi" }[durumF(f)], f.aciklama]); });
-  if (list.length) { const T = k => r2(list.reduce((t, f) => t + calcF(f)[k], 0)); rows.push(["Toplam", list.length + " fatura", "", "", "", "", T("matrah"), "", T("kdv"), T("brut"), T("tevkif"), T("stopaj"), T("net"), "", "", "", ""]); }
+  const rows = [["Tarih", "Fatura no", "Cari", "VKN/TCKN", "Dönem", "Vade", "Miktar", "Matrah", "KDV %", "KDV", "KDV dahil", "Tevkifat", "Stopaj", "Ödenecek / tahsil", "Ödenen", "Kalan", "Durum", "Açıklama"]];
+  list.forEach(f => { const c = calcF(f), cr = cari(f.cariId) || {}, o = Math.min(odenenF(f.id), c.net); rows.push([xd(f.tarih), f.no, cr.ad, cr.vkn, f.donem ? ymLabel(f.donem) : "", xd(vadeF(f)), (x => x && !x.tahmin ? miktarYaz(x) : "")(miktarF(f)), c.matrah, { g: f.kdvOran }, c.kdv, c.brut, c.tevkif, c.stopaj, c.net, o, r2(c.net - o), { acik: "Açık", kismi: "Kısmi", odendi: f.tur === "gelen" ? "Ödendi" : "Tahsil edildi" }[durumF(f)], f.aciklama]); });
+  if (list.length) { const T = k => r2(list.reduce((t, f) => t + calcF(f)[k], 0)); rows.push(["Toplam", list.length + " fatura", "", "", "", "", "", T("matrah"), "", T("kdv"), T("brut"), T("tevkif"), T("stopaj"), T("net"), "", "", "", ""]); }
   return rows;
 }
 async function paketIndir() {
@@ -2130,6 +2173,7 @@ document.addEventListener("input", e => {
   if (id === "ara-q" && S.ara) { S.ara.q = e.target.value; S.ara.sel = 0; araCiz(); return; }
   if (["m-tarih", "m-vade"].includes(id)) updVadeHint();
   if (["m-matrah", "m-kdv", "m-tev", "m-stop"].includes(id)) updCalc();
+  if (id === "m-miktar" || id === "m-birim") miktarMatrah();
   if (["m-satis", "m-alis", "m-agkdv"].includes(id)) updAg();
   if (id === "m-acik" && S.modal && S.modal.kind === "fatura") { clearTimeout(S.acikT); S.acikT = setTimeout(personelAciklamadan, 400); }
   if (e.target.dataset && e.target.dataset.bId) updBulkTotal();
@@ -2169,6 +2213,7 @@ document.addEventListener("change", e => {
   const row = e.target.closest && e.target.closest("tr[data-row]");
   if (row && e.target.dataset.f === "tur") { const r = S.imp[+row.dataset.row]; r.tur = e.target.value; r.cariId = ""; render(); return; }
   if (["m-kdv", "m-tev", "m-stop"].includes(id)) updCalc();
+  if (id === "m-cari" || id === "m-personel") miktarMatrah();
   if (id === "m-cari") {
     updHint(); updVadeHint();
     if (S.modal && S.modal.kind === "hareket") { S.modal.dag = {}; S.modal.dagManual = false; updDag(); }

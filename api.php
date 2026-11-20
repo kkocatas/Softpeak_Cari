@@ -58,6 +58,8 @@ const ENT = [
         'donem' => ['donem', 'month', null, true],
         'vade' => ['vade', 'date'],
         'matrah' => ['matrah', 'money', null, true],
+        'miktar' => ['miktar', 'miktar'],
+        'birim' => ['birim', 'enum', ['', 'gün', 'saat', 'adet', 'ay', 'hafta']],
         'kdvOran' => ['kdv_oran', 'pct'],
         'tevkifat' => ['tevkifat', 'tevkifat'],
         'stopajOran' => ['stopaj_oran', 'pct'],
@@ -82,6 +84,7 @@ function to_api(string $t, array $row): array {
         $o[$k] = match ($d[1]) {
             'ref' => $v === null ? '' : (string)$v,
             'money', 'pct' => $v === null ? 0 : (float)$v,
+            'miktar' => $v === null ? null : (float)$v,
             'tevkifat', 'int' => (int)$v,
             default => $v ?? '',
         };
@@ -114,6 +117,7 @@ function validate(string $t, array $in): array {
             case 'pct': if (!is_numeric($v) || $v < 0 || $v > 100) fail('Oran 0 ile 100 arasında olmalı.'); $vals[$col] = (float)$v; break;
             case 'int': if (!preg_match('/^\d+$/', (string)$v) || (int)$v < $opt[0] || (int)$v > $opt[1]) fail('Vade ' . $opt[0] . ' ile ' . $opt[1] . ' gün arasında tam sayı olmalı.'); $vals[$col] = (int)$v; break;
             case 'tevkifat': if (!in_array((int)$v, [0, 2, 3, 4, 5, 7, 9, 10], true)) fail('Tevkifat oranı geçersiz.'); $vals[$col] = (int)$v; break;
+            case 'miktar': if (!is_numeric($v) || (float)$v < 0 || (float)$v > 99999999) fail('Miktar geçersiz.'); $vals[$col] = (float)$v > 0 ? round((float)$v, 2) : null; break;
             case 'ref':
                 if (!ctype_digit((string)$v)) fail('Geçersiz bağlantı: ' . $k);
                 $st = db()->prepare("SELECT COUNT(*) FROM {$opt} WHERE id = ?"); $st->execute([(int)$v]);
@@ -122,6 +126,8 @@ function validate(string $t, array $in): array {
         }
     }
     if ($t === 'faturalar' && $vals['matrah'] <= 0) fail('Matrah 0\'dan büyük olmalı.');
+    if ($t === 'faturalar' && $vals['miktar'] === null) $vals['birim'] = '';
+    if ($t === 'faturalar' && $vals['miktar'] !== null && $vals['birim'] === '') $vals['birim'] = 'adet';
     if ($t === 'hareketler' && $vals['tutar'] <= 0) fail('Tutar 0\'dan büyük olmalı.');
     return $vals;
 }
@@ -459,7 +465,7 @@ function personel_islem(string $a, array $user, string $method): void {
             }
             $girdi = ['tur' => 'gelen', 'cariId' => (string)$cid, 'personelId' => '', 'projeId' => $eski && $eski['proje_id'] ? (string)$eski['proje_id'] : '',
                 'vade' => $eski['vade'] ?? ''];
-            foreach (['no', 'tarih', 'donem', 'matrah', 'kdvOran', 'tevkifat', 'stopajOran', 'aciklama'] as $k) $girdi[$k] = $in[$k] ?? null;
+            foreach (['no', 'tarih', 'donem', 'matrah', 'miktar', 'birim', 'kdvOran', 'tevkifat', 'stopajOran', 'aciklama'] as $k) $girdi[$k] = $in[$k] ?? null;
             if ($id) $girdi['id'] = (string)$id;
             $dosya = $_FILES['pdf'] ?? null;
             if (!$id && (!$dosya || ($dosya['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) fail('Fatura belgesini (PDF veya e-Fatura zip) ekleyin.');

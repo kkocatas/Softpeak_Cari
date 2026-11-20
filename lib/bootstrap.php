@@ -175,7 +175,7 @@ function pdf_root(): string {
 }
 
 /* ---------- veritabanı sürümü (sonradan eklenen tablo/sütunlar) ---------- */
-const SCHEMA_VER = 9;
+const SCHEMA_VER = 10;
 /** Sonradan eklenen tabloları mevcut kurulumlarda oluşturur (oturum başına bir kez). */
 function ensure_schema(): void {
     if (($_SESSION['schema'] ?? 0) >= SCHEMA_VER) return;
@@ -221,6 +221,8 @@ function ensure_schema(): void {
     $st = db()->prepare("SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kullanicilar' AND COLUMN_NAME = 'kullanici'"); $st->execute();
     if ((int)$st->fetchColumn() < 120) db()->exec('ALTER TABLE kullanicilar MODIFY kullanici VARCHAR(120) NOT NULL');
     if (!$kol('kullanicilar', 'sifre_degis')) db()->exec('ALTER TABLE kullanicilar ADD COLUMN sifre_degis TINYINT(1) NOT NULL DEFAULT 0 AFTER cari_id');
+    // v10: faturadaki hizmet miktarı ve birimi (ör. 23 gün, 160 saat, 1 adet)
+    if (!$kol('faturalar', 'miktar')) db()->exec("ALTER TABLE faturalar ADD COLUMN miktar DECIMAL(10,2) NULL AFTER matrah, ADD COLUMN birim VARCHAR(10) NOT NULL DEFAULT '' AFTER miktar");
     $_SESSION['schema'] = SCHEMA_VER;
     unset($GLOBALS['__ayar_cache']);
 }

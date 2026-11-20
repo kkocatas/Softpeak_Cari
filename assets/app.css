@@ -625,3 +625,10 @@ body.zorunlu .app{display:block}
 body.zorunlu .rail,body.zorunlu aside,body.zorunlu .altbar,body.zorunlu .mtop{display:none!important}
 body.zorunlu #main{padding:16px}
 .warn-txt{color:var(--warn)}
+
+/* ================= sürüm 35: fatura miktarı (gün / saat / adet) ================= */
+.miktar{display:inline-block;font-variant-numeric:tabular-nums;font-weight:600;color:var(--fg-2);white-space:nowrap}
+.miktar.tahmin{font-weight:500;color:var(--fg-3)}
+.miktar-gir{display:flex;gap:6px}
+.miktar-gir input{flex:1;min-width:0}
+.miktar-gir select{width:auto;flex:0 0 auto}
